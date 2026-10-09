@@ -1,8 +1,175 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta name="theme-color" content="#111b2c"/><title>Finanças | Casa & Nossas Delícias</title><link rel="stylesheet" href="/style.css"/></head>
-<body><div id="login" class="login-shell"><form id="login-form" class="login-panel"><span class="eyebrow">GESTÃO FINANCEIRA PRIVADA</span><div class="brand-mark">◇</div><h1>Seu dinheiro,<br>com clareza.</h1><p>Um lugar para cuidar das finanças da casa e da Nossas Delícias, sem misturar os números.</p><label>E-mail<input type="email" name="email" autocomplete="username" required placeholder="Seu e-mail"/></label><label>Senha<input type="password" name="password" autocomplete="current-password" required placeholder="Sua senha"/></label><button class="primary" type="submit">Entrar no sistema <span>↗</span></button><small id="login-error" role="alert"></small></form></div>
-<div id="app" class="shell hidden">
-<aside class="sidebar"><div class="identity"><span class="brand-mark small">◇</span><span>ORBITA <small>finanças</small></span></div><span class="side-label">AMBIENTE</span><div id="spaces" class="spaces"></div><span class="side-label">NAVEGAÇÃO</span><nav id="nav"><button data-view="overview" class="active">◫ <span>Visão geral</span></button><button data-view="entries">⇄ <span>Lançamentos</span></button><button data-view="bills">▤ <span>Contas a pagar/receber</span></button><button data-view="cards">▣ <span>Cartões</span></button><button data-view="accounts">◈ <span>Contas e caixas</span></button><button data-view="categories">▦ <span>Categorias</span></button><button data-view="contacts">♧ <span>Contatos</span></button><button data-view="reports">▥ <span>Prestação de contas</span></button><button data-view="audit">◷ <span>Histórico de ações</span></button></nav><div class="side-footer"><span id="account-email"></span><button id="logout">Sair ↗</button></div></aside>
-<div class="main"><header class="topbar"><div><span class="eyebrow" id="context">PAINEL FINANCEIRO</span><h2 id="heading">Visão geral</h2></div><div class="top-actions"><span id="today"></span><button id="theme" title="Alternar tema">◐</button><button id="add" class="primary">+ Novo lançamento</button></div></header><main id="content"></main></div></div>
-<dialog id="dialog"><form id="form"><header class="modal-header"><div><span class="eyebrow" id="modal-subtitle">CADASTRO</span><h2 id="modal-title">Novo lançamento</h2></div><button type="button" id="close-dialog" class="icon-button" aria-label="Fechar">✕</button></header><div id="form-fields" class="form-grid"></div><p id="form-error" class="error"></p><footer class="modal-footer"><button type="button" id="cancel">Cancelar</button><button class="primary" type="submit">Salvar alterações</button></footer></form></dialog>
-<div id="toast" class="toast hidden" role="status"></div><script type="module" src="/app.js"></script></body></html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f3ef" />
+    <title>Financeiro · Casa & Nossas Delícias</title>
+    <link rel="stylesheet" href="/style.css?v=2" />
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Ir para o conteúdo</a>
+    <div id="login" class="login-shell">
+      <div class="login-intro">
+        <span class="wordmark">financeiro<span>.</span></span>
+        <div>
+          <span class="eyebrow">CASA & NOSSAS DELÍCIAS</span>
+          <h1>Casa &amp;<br />Nossas Delícias.</h1>
+          <p>
+            Receitas, despesas e próximos pagamentos.<br />Cada coisa no seu
+            lugar.
+          </p>
+          <div class="login-spaces">
+            <span>01 / Casa</span><span>02 / Nossas Delícias</span>
+          </div>
+        </div>
+        <small>Seu espaço de organização financeira.</small>
+      </div>
+      <div class="login-access">
+        <form id="login-form" class="login-panel">
+          <span class="eyebrow">ACESSO PRIVADO</span>
+          <h2>Bem-vindo de volta.</h2>
+          <p>Entre para acompanhar suas contas.</p>
+          <label
+            >E-mail<input
+              type="email"
+              name="email"
+              autocomplete="username"
+              required
+              placeholder="Seu e-mail" /></label
+          ><label
+            >Senha<input
+              type="password"
+              name="password"
+              autocomplete="current-password"
+              required
+              placeholder="Sua senha" /></label
+          ><button class="primary" type="submit">
+            Entrar <span aria-hidden="true">→</span></button
+          ><small id="login-error" role="alert"></small>
+        </form>
+      </div>
+    </div>
+    <div id="app" class="shell hidden">
+      <button
+        id="nav-backdrop"
+        class="nav-backdrop"
+        aria-label="Fechar navegação"
+        tabindex="-1"
+      ></button>
+      <aside id="sidebar" class="sidebar">
+        <div class="identity">
+          <span class="wordmark">financeiro<span>.</span></span
+          ><button
+            id="close-nav"
+            class="icon-button mobile-only"
+            aria-label="Fechar menu"
+          >
+            ×
+          </button>
+        </div>
+        <span class="side-label">ACOMPANHAR</span>
+        <nav id="nav" aria-label="Navegação principal">
+          <button data-view="overview" class="active">
+            <span class="nav-icon" data-icon="overview"></span>Visão geral
+          </button>
+          <button data-view="entries">
+            <span class="nav-icon" data-icon="entries"></span>Lançamentos
+          </button>
+          <button data-view="bills">
+            <span class="nav-icon" data-icon="bills"></span>A pagar e receber
+          </button>
+          <button data-view="reports">
+            <span class="nav-icon" data-icon="reports"></span>Prestação de
+            contas
+          </button>
+          <span class="side-label">ORGANIZAR</span>
+          <button data-view="accounts">
+            <span class="nav-icon" data-icon="accounts"></span>Contas e caixas
+          </button>
+          <button data-view="cards">
+            <span class="nav-icon" data-icon="cards"></span>Cartões
+          </button>
+          <button data-view="categories">
+            <span class="nav-icon" data-icon="categories"></span>Categorias
+          </button>
+          <button data-view="contacts">
+            <span class="nav-icon" data-icon="contacts"></span>Contatos
+          </button>
+          <button data-view="audit">
+            <span class="nav-icon" data-icon="audit"></span>Histórico de ações
+          </button>
+        </nav>
+        <div class="side-footer">
+          <span class="eyebrow">SUA CONTA</span><span id="account-email"></span
+          ><button id="logout">
+            Sair da conta <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </aside>
+      <div class="main">
+        <div class="workspace-bar">
+          <button
+            id="menu"
+            class="icon-button mobile-only"
+            aria-label="Abrir menu"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            ☰
+          </button>
+          <div
+            id="spaces"
+            class="spaces"
+            role="group"
+            aria-label="Escolher ambiente"
+          ></div>
+          <div class="workspace-tools">
+            <span id="today"></span
+            ><button
+              id="theme"
+              class="icon-button"
+              aria-label="Alternar tema"
+              title="Alternar tema"
+            ></button>
+          </div>
+        </div>
+        <header class="topbar">
+          <div>
+            <span class="eyebrow" id="context">CASA / FINANCEIRO</span>
+            <h2 id="heading">Visão geral</h2>
+            <p id="view-description"></p>
+          </div>
+          <button id="add" class="primary">+ Novo lançamento</button>
+        </header>
+        <main id="content" tabindex="-1" aria-live="polite"></main>
+      </div>
+    </div>
+    <dialog id="dialog">
+      <form id="form">
+        <header class="modal-header">
+          <div>
+            <span class="eyebrow" id="modal-subtitle">CADASTRO</span>
+            <h2 id="modal-title">Novo lançamento</h2>
+          </div>
+          <button
+            type="button"
+            id="close-dialog"
+            class="icon-button"
+            aria-label="Fechar"
+          >
+            ×
+          </button>
+        </header>
+        <div id="form-fields" class="form-grid"></div>
+        <p id="form-error" class="error" role="alert"></p>
+        <footer class="modal-footer">
+          <button type="button" id="cancel">Cancelar</button
+          ><button class="primary" type="submit">Salvar</button>
+        </footer>
+      </form>
+    </dialog>
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script type="module" src="/app.js?v=2"></script>
+  </body>
+</html>

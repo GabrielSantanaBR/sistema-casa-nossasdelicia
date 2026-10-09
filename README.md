@@ -1,4 +1,4 @@
-# Órbita — Financeiro Casa & Nossas Delícias
+# Financeiro — Casa & Nossas Delícias
 
 Sistema web de gestão financeira em português, com dois ambientes separados: **Casa** e **Nossas Delícias**.
 
@@ -12,7 +12,8 @@ Sistema web de gestão financeira em português, com dois ambientes separados: *
 - Contas pendentes e atrasadas; edição e exclusão de lançamentos.
 - Relatório mensal e exportação do histórico integral em CSV compatível com Excel.
 - Registro básico de auditoria para criações, edições e exclusões.
-- Tema claro/escuro e interface responsiva.
+- Interface com abas Casa/Nossas Delícias, tema claro/escuro, menu móvel, busca e filtros por tipo/situação.
+- Resumo mensal com navegação por mês, próximos vencimentos e cadastros em listas.
 
 ## Implantar no Railway
 
