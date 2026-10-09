@@ -1223,3 +1223,61 @@ body.dark .tag.good {
     border: 1px solid #ccc;
   }
 }
+
+/* Long names and accessible forms */
+.asset-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+}
+.asset-row h3,
+.asset-row .subtle,
+.due-item b,
+.data-table td b {
+  overflow-wrap: anywhere;
+}
+.asset-value {
+  max-width: 28rem;
+}
+.actions {
+  flex-wrap: wrap;
+}
+.check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+.check-label input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 2px;
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+dialog {
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+.modal-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  padding-top: 14px;
+}
+@media (max-width: 760px) {
+  .asset-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .asset-row .actions {
+    grid-column: 1/-1;
+    justify-content: flex-start;
+  }
+  .button-row {
+    flex-wrap: wrap;
+  }
+  dialog {
+    max-height: calc(100dvh - 16px);
+  }
+}

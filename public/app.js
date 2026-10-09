@@ -22,13 +22,36 @@ const money = (n) =>
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;");
 const localDate = (d) => (d ? String(d).slice(0, 10) : ""),
-  today = () =>
-    new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 10);
+  today = () => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    return ["year", "month", "day"]
+      .map((type) => parts.find((p) => p.type === type).value)
+      .join("-");
+  };
 const displayDate = (d) =>
   d ? localDate(d).split("-").reverse().join("/") : "—";
+const storage = {
+  get: (key) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set: (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {}
+  },
+};
 const state = {
+  csrfToken: null,
+  pendingEntries: [],
   user: null,
   spaces: [],
   space: null,
@@ -46,14 +69,21 @@ const state = {
   search: "",
   kind: "all",
   status: "all",
-  dark: localStorage.getItem("theme") === "dark",
+  dark: storage.get("theme") === "dark",
 };
 const endpoint = (p = "") => "/api/s/" + state.space.id + "/" + p;
 async function api(path, opts = {}) {
+  const { writeKey, ...options } = opts;
+  const headers = { "Content-Type": "application/json", ...options.headers };
+  if (options.method && !["GET", "HEAD"].includes(options.method)) {
+    headers["X-CSRF-Token"] = state.csrfToken || "";
+    if (path.startsWith("/api/s/"))
+      headers["Idempotency-Key"] = writeKey || crypto.randomUUID();
+  }
   const r = await fetch(path, {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    ...opts,
+    ...options,
+    headers,
   });
   if (r.status === 401) {
     showLogin();
@@ -70,6 +100,21 @@ function notify(s) {
 }
 function showLogin() {
   closeNav();
+  $("#dialog").close();
+  Object.assign(state, {
+    user: null,
+    csrfToken: null,
+    summary: null,
+    entries: [],
+    pendingEntries: [],
+    accounts: [],
+    cards: [],
+    categories: [],
+    contacts: [],
+    audit: [],
+  });
+  $("#content").replaceChildren();
+  $("#account-email").textContent = "";
   loadVersion++;
   $("#login").classList.remove("hidden");
   $("#app").classList.add("hidden");
@@ -87,6 +132,7 @@ async function boot() {
   });
   try {
     const r = await api("/api/me");
+    state.csrfToken = r.csrfToken;
     state.user = r.user;
     state.spaces = r.spaces;
     state.space = r.spaces[0];
@@ -102,6 +148,7 @@ $("#login-form").addEventListener("submit", async (e) => {
   $("#login-error").textContent = "";
   const d = Object.fromEntries(new FormData(e.target)),
     button = e.target.querySelector("[type=submit]");
+  if (button.disabled) return;
   button.disabled = true;
   button.textContent = "Entrando…";
   try {
@@ -124,18 +171,23 @@ $("#login-form").addEventListener("submit", async (e) => {
 $("#logout").onclick = async () => {
   try {
     await api("/api/logout", { method: "POST" });
-  } finally {
     showLogin();
+  } catch (err) {
+    notify(err.message);
   }
 };
 $("#theme").onclick = () => {
   state.dark = !state.dark;
-  localStorage.setItem("theme", state.dark ? "dark" : "light");
+  storage.set("theme", state.dark ? "dark" : "light");
   document.body.classList.toggle("dark", state.dark);
 };
 $("#nav").addEventListener("click", (e) => {
   const b = e.target.closest("[data-view]");
   if (b && !$("#content").hasAttribute("aria-busy")) {
+    if (b.dataset.view === "bills") {
+      state.kind = "all";
+      state.status = "all";
+    }
     state.view = b.dataset.view;
     render();
   }
@@ -167,6 +219,19 @@ function period() {
   };
 }
 let loadVersion = 0;
+async function allEntries(base, params = {}) {
+  const result = [];
+  for (let offset = 0; ; offset += 250) {
+    const rows = await api(
+      base +
+        "entries?" +
+        new URLSearchParams({ ...params, limit: 250, offset }),
+    );
+    result.push(...rows);
+    if (rows.length < 250) return result;
+  }
+}
+
 async function load() {
   const version = ++loadVersion;
   const base = endpoint();
@@ -174,22 +239,32 @@ async function load() {
     '<div class="loading" role="status">Carregando suas contas…</div>';
   $("#content").setAttribute("aria-busy", "true");
   $("#add").disabled = true;
-  document.querySelectorAll("#nav button").forEach(b => b.disabled = true);
+  document.querySelectorAll("#nav button").forEach((b) => (b.disabled = true));
   try {
-    const [summary, entries, accounts, cards, categories, contacts, audit] =
-      await Promise.all([
-        api(base + "summary?" + new URLSearchParams(period())),
-        api(base + "entries?" + new URLSearchParams(period())),
-        api(base + "accounts"),
-        api(base + "cards"),
-        api(base + "categories"),
-        api(base + "contacts"),
-        api(base + "audit"),
-      ]);
+    const [
+      summary,
+      entries,
+      pendingEntries,
+      accounts,
+      cards,
+      categories,
+      contacts,
+      audit,
+    ] = await Promise.all([
+      api(base + "summary?" + new URLSearchParams(period())),
+      allEntries(base, period()),
+      allEntries(base, { pending: true }),
+      api(base + "accounts"),
+      api(base + "cards"),
+      api(base + "categories"),
+      api(base + "contacts"),
+      api(base + "audit"),
+    ]);
     if (version !== loadVersion) return;
     Object.assign(state, {
       summary,
       entries,
+      pendingEntries,
       accounts,
       cards,
       categories,
@@ -208,7 +283,9 @@ async function load() {
     if (version === loadVersion) {
       $("#content").removeAttribute("aria-busy");
       $("#add").disabled = false;
-      document.querySelectorAll("#nav button").forEach(b => b.disabled = false);
+      document
+        .querySelectorAll("#nav button")
+        .forEach((b) => (b.disabled = false));
     }
   }
 }
@@ -217,7 +294,16 @@ const sum = (kind) =>
 function table(head, rows) {
   return (
     '<div class="table-scroll"><table class="data-table"><thead><tr>' +
-    head.map((x) => '<th'+(x.includes('col-date')?' class="col-date"':'')+'>'+x+'</th>').join("") +
+    head
+      .map(
+        (x) =>
+          "<th" +
+          (x.includes("col-date") ? ' class="col-date"' : "") +
+          ">" +
+          x +
+          "</th>",
+      )
+      .join("") +
     "</tr></thead><tbody>" +
     rows.join("") +
     "</tbody></table></div>"
@@ -284,7 +370,15 @@ function entryRow(t, compact = false) {
     money(t.amount) +
     "</td><td>" +
     status +
-    '</td><td><div class="actions"><button data-edit="' +
+    '</td><td><div class="actions">' +
+    (!t.paid_date && t.kind !== "transfer"
+      ? '<button data-settle="' +
+        t.id +
+        '">' +
+        (t.kind === "income" ? "Receber" : "Pagar") +
+        "</button>"
+      : "") +
+    '<button data-edit="' +
     t.id +
     '" aria-label="Editar ' +
     esc(t.description) +
@@ -303,7 +397,7 @@ function overview() {
   const s = state.summary,
     inc = sum("income"),
     exp = sum("expense"),
-    pending = state.entries.filter(
+    pending = state.pendingEntries.filter(
       (t) => !t.paid_date && t.kind !== "transfer",
     ),
     recent = state.entries.slice(0, 6),
@@ -339,7 +433,7 @@ function overview() {
           "entries",
           "Criar primeiro lançamento",
         )) +
-    '</section><div class="panel-stack"><section class="panel"><div class="section-head"><h3>A pagar e receber</h3><button class="text-button" data-go="bills">Ver →</button></div><div class="attention"><div><span class="muted">Pendentes no mês</span><div class="subtle">' +
+    '</section><div class="panel-stack"><section class="panel"><div class="section-head"><h3>A pagar e receber</h3><button class="text-button" data-go="bills">Ver →</button></div><div class="attention"><div><span class="muted">Pendentes · todos os meses</span><div class="subtle">' +
     s.overdue.count +
     " atrasados em todo o histórico</div></div><strong>" +
     pending.length +
@@ -361,7 +455,7 @@ function overview() {
               "</span></div>",
           )
           .join("")
-      : '<p class="subtle">Nenhuma conta pendente neste mês.</p>') +
+      : '<p class="subtle">Nenhuma conta pendente.</p>') +
     '</section><section class="panel"><h3>Para onde vai o dinheiro</h3>' +
     (categories.length
       ? categories
@@ -403,7 +497,7 @@ function overview() {
   );
 }
 function filteredEntries(bills = false) {
-  return state.entries.filter(
+  return (bills ? state.pendingEntries : state.entries).filter(
     (t) =>
       (!bills || (!t.paid_date && t.kind !== "transfer")) &&
       (state.kind === "all" || t.kind === state.kind) &&
@@ -435,7 +529,9 @@ function entryTable(bills) {
       )
     : empty(
         "Nenhum lançamento encontrado.",
-        "Confira o mês e os filtros ou registre uma movimentação.",
+        bills
+          ? "Todas as pendências do histórico aparecem aqui. Confira os filtros."
+          : "Confira o mês e os filtros ou registre uma movimentação.",
         "entries",
         "Novo lançamento",
       );
@@ -453,6 +549,7 @@ function entriesView(bills = false) {
       ["income", "Receitas"],
       ["transfer", "Transferências"],
     ]
+      .filter(([v]) => !bills || !["transfer", "paid"].includes(v))
       .map(
         ([v, l]) =>
           '<option value="' +
@@ -471,6 +568,7 @@ function entriesView(bills = false) {
       ["paid", "Liquidados"],
       ["overdue", "Atrasados"],
     ]
+      .filter(([v]) => !bills || !["transfer", "paid"].includes(v))
       .map(
         ([v, l]) =>
           '<option value="' +
@@ -535,7 +633,13 @@ function assets(type) {
                 : type === "contacts"
                   ? '<span class="subtle">' + esc(x.notes) + "</span>"
                   : "") +
-              '</div><div class="actions"><button data-remove="' +
+              '</div><div class="actions"><button data-edit-asset="' +
+              type +
+              ":" +
+              x.id +
+              '" aria-label="Editar ' +
+              esc(x.name) +
+              '">Editar</button><button data-remove="' +
               type +
               ":" +
               x.id +
@@ -557,14 +661,16 @@ function assets(type) {
 function reports() {
   const inc = sum("income"),
     exp = sum("expense"),
-    paidInc = state.entries
-      .filter((x) => x.kind === "income" && x.paid_date)
-      .reduce((a, x) => a + Number(x.amount), 0),
-    paidExp = state.entries
-      .filter((x) => x.kind === "expense" && x.paid_date)
-      .reduce((a, x) => a + Number(x.amount), 0);
+    paidInc =
+      state.entries
+        .filter((x) => x.kind === "income" && x.paid_date)
+        .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100,
+    paidExp =
+      state.entries
+        .filter((x) => x.kind === "expense" && x.paid_date)
+        .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100;
   return (
-    '<div class="button-row"><button class="primary" id="csv">↓ Exportar prestação de contas (CSV)</button><button id="print">Imprimir esta página</button></div><div class="guide">O demonstrativo usa os lançamentos do mês selecionado. A exportação CSV contém o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
+    '<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">O demonstrativo usa os lançamentos do mês selecionado. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
     section(
       "Demonstrativo do período",
       simpleLine("Receitas previstas", money(inc)) +
@@ -584,7 +690,7 @@ function reports() {
         money(
           state.entries
             .filter((x) => x.kind === "expense" && !x.paid_date)
-            .reduce((a, x) => a + Number(x.amount), 0),
+            .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100,
         ),
       ) +
         simpleLine(
@@ -592,7 +698,8 @@ function reports() {
           money(
             state.entries
               .filter((x) => x.kind === "income" && !x.paid_date)
-              .reduce((a, x) => a + Number(x.amount), 0),
+              .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) /
+              100,
           ),
         ) +
         simpleLine(
@@ -605,7 +712,7 @@ function reports() {
       "Detalhamento para prestação de contas",
       table(
         ["Descrição", "Vencimento", "Tipo", "Valor", "Situação", ""],
-        state.entries.map(entryRow),
+        state.entries.map((t) => entryRow(t)),
       ),
     )
   );
@@ -632,13 +739,22 @@ document
   .querySelectorAll("[data-icon]")
   .forEach((x) => (x.innerHTML = icon(x.dataset.icon)));
 $("#theme").innerHTML = icon("theme");
+const mobileNav = window.matchMedia("(max-width:760px)");
+function syncNav() {
+  const opened = document.body.classList.contains("nav-open");
+  $("#sidebar").inert = mobileNav.matches && !opened;
+  $(".main").inert = mobileNav.matches && opened;
+}
+mobileNav.addEventListener("change", () => closeNav());
 function closeNav() {
   document.body.classList.remove("nav-open");
   $("#menu").setAttribute("aria-expanded", "false");
+  syncNav();
 }
 $("#menu").onclick = () => {
   document.body.classList.add("nav-open");
   $("#menu").setAttribute("aria-expanded", "true");
+  syncNav();
   $("#close-nav").focus();
 };
 $("#close-nav").onclick = $("#nav-backdrop").onclick = () => {
@@ -646,15 +762,61 @@ $("#close-nav").onclick = $("#nav-backdrop").onclick = () => {
   $("#menu").focus();
 };
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeNav();
+  if (e.key === "Escape" && document.body.classList.contains("nav-open")) {
+    closeNav();
+    $("#menu").focus();
+  }
+  if (
+    e.key === "Tab" &&
+    mobileNav.matches &&
+    document.body.classList.contains("nav-open")
+  ) {
+    const buttons = [
+        ...$("#sidebar").querySelectorAll("button:not(:disabled)"),
+      ],
+      first = buttons[0],
+      last = buttons.at(-1);
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 });
 function bindActions(root) {
+  root.querySelectorAll("[data-edit-asset]").forEach(
+    (x) =>
+      (x.onclick = () => {
+        const [type, id] = x.dataset.editAsset.split(":");
+        openForm(
+          type,
+          state[type].find((r) => String(r.id) === id),
+        );
+      }),
+  );
+  root.querySelectorAll("[data-settle]").forEach(
+    (x) =>
+      (x.onclick = () => {
+        const r = [...state.entries, ...state.pendingEntries].find(
+          (r) => String(r.id) === x.dataset.settle,
+        );
+        openForm("entries", { ...r, paid_date: today() });
+        $("#form [name=paid_date]").focus();
+      }),
+  );
+
   root
     .querySelectorAll("[data-create]")
     .forEach((x) => (x.onclick = () => openForm(x.dataset.create)));
   root.querySelectorAll("[data-go]").forEach(
     (x) =>
       (x.onclick = () => {
+        if (x.dataset.go === "bills") {
+          state.kind = "all";
+          state.status = "all";
+        }
         state.view = x.dataset.go;
         render();
       }),
@@ -664,7 +826,9 @@ function bindActions(root) {
       (x.onclick = () =>
         openForm(
           "entries",
-          state.entries.find((t) => String(t.id) === x.dataset.edit),
+          [...state.entries, ...state.pendingEntries].find(
+            (t) => String(t.id) === x.dataset.edit,
+          ),
         )),
   );
   root
@@ -787,15 +951,22 @@ function render() {
     state.month +
     '" required><button id="next-month" aria-label="Próximo mês">›</button></div></div>' +
     main;
-  $("#month").onchange = async (e) => {
-    if (/^\d{4}-\d{2}$/.test(e.target.value)) {
-      state.month = e.target.value;
-      await load();
-    }
-  };
-  $("#prev-month").onclick = () => changeMonth(-1);
-  $("#next-month").onclick = () => changeMonth(1);
+  if (selected === "bills")
+    $(".period-bar").innerHTML = "<span>Pendências de todos os meses</span>";
+  if ($("#month"))
+    $("#month").onchange = async (e) => {
+      if (/^\d{4}-\d{2}$/.test(e.target.value)) {
+        state.month = e.target.value;
+        await load();
+      }
+    };
+  if ($("#prev-month")) $("#prev-month").onclick = () => changeMonth(-1);
+  if ($("#next-month")) $("#next-month").onclick = () => changeMonth(1);
   $("#csv")?.addEventListener("click", () => {
+    location.href =
+      endpoint("export.csv") + "?" + new URLSearchParams(period());
+  });
+  $("#csv-all")?.addEventListener("click", () => {
     location.href = endpoint("export.csv");
   });
   $("#print")?.addEventListener("click", () => window.print());
@@ -909,6 +1080,9 @@ function linked(label, name, type, value) {
   );
 }
 function openForm(type, record = null) {
+  state.formSpace = state.space.id;
+  state.writeKey = crypto.randomUUID();
+  state.lastWritePayload = null;
   state.mode = type;
   state.edit = record;
   $("#modal-subtitle").textContent = state.space.name;
@@ -950,7 +1124,7 @@ function openForm(type, record = null) {
         "number",
         d.amount || "",
         "",
-        'required min="0.01" step="0.01"',
+        'required min="0.01" max="999999999999.99" step="0.01"',
       ) +
       field(
         "Vencimento / competência *",
@@ -958,13 +1132,15 @@ function openForm(type, record = null) {
         "date",
         localDate(d.due_date) || today(),
         false,
-        "required",
+        'required min="1000-01-01" max="9999-12-31"',
       ) +
       field(
         "Data do pagamento (vazio = pendente)",
         "paid_date",
         "date",
         localDate(d.paid_date),
+        false,
+        `min="1000-01-01" max="${today()}"`,
       ) +
       linked(
         "Conta de origem / destino",
@@ -1006,11 +1182,21 @@ function openForm(type, record = null) {
         d.notes,
         true,
       ) +
+      (record
+        ? '<p class="subtle wide">A edição altera somente esta parcela.</p>'
+        : '<label class="check-label wide"><input type="checkbox" name="generate_installments">Gerar todas as parcelas mensais · informe o valor de cada parcela, o número 1 e o total de parcelas.</label>') +
       "</div></details>";
   }
   if (type === "accounts")
     html =
-      field("Nome *", "name", "text", "", false, "required") +
+      field(
+        "Nome *",
+        "name",
+        "text",
+        record?.name || "",
+        false,
+        'required maxlength="150"',
+      ) +
       select(
         "Tipo",
         "kind",
@@ -1020,17 +1206,31 @@ function openForm(type, record = null) {
           ["savings", "Poupança"],
           ["investment", "Investimento"],
         ],
-        "bank",
+        record?.kind || "bank",
       ) +
-      field("Saldo inicial (R$)", "opening", "number", 0, false, 'step="0.01"');
+      field(
+        "Saldo inicial (R$)",
+        "opening",
+        "number",
+        record?.opening ?? 0,
+        false,
+        'step="0.01"',
+      );
   if (type === "cards")
     html =
-      field("Nome do cartão *", "name", "text", "", false, "required") +
+      field(
+        "Nome do cartão *",
+        "name",
+        "text",
+        record?.name || "",
+        false,
+        'required maxlength="150"',
+      ) +
       field(
         "Limite (R$)",
         "credit_limit",
         "number",
-        0,
+        record?.credit_limit ?? 0,
         false,
         'min="0" step="0.01"',
       ) +
@@ -1038,7 +1238,7 @@ function openForm(type, record = null) {
         "Dia de fechamento",
         "closing_day",
         "number",
-        1,
+        record?.closing_day ?? 1,
         false,
         'min="1" max="31"',
       ) +
@@ -1046,13 +1246,20 @@ function openForm(type, record = null) {
         "Dia de vencimento",
         "due_day",
         "number",
-        10,
+        record?.due_day ?? 10,
         false,
         'min="1" max="31"',
       );
   if (type === "categories")
     html =
-      field("Nome *", "name", "text", "", false, "required") +
+      field(
+        "Nome *",
+        "name",
+        "text",
+        record?.name || "",
+        false,
+        'required maxlength="150"',
+      ) +
       select(
         "Tipo",
         "kind",
@@ -1060,11 +1267,18 @@ function openForm(type, record = null) {
           ["expense", "Despesa"],
           ["income", "Receita"],
         ],
-        "expense",
+        record?.kind || "expense",
       );
   if (type === "contacts")
     html =
-      field("Nome *", "name", "text", "", false, "required") +
+      field(
+        "Nome *",
+        "name",
+        "text",
+        record?.name || "",
+        false,
+        'required maxlength="150"',
+      ) +
       select(
         "Tipo",
         "kind",
@@ -1073,22 +1287,62 @@ function openForm(type, record = null) {
           ["customer", "Cliente"],
           ["other", "Outro"],
         ],
-        "other",
+        record?.kind || "other",
       ) +
-      field("Observações", "notes", "textarea", "", true);
+      field("Observações", "notes", "textarea", record?.notes || "", true);
   $("#form-fields").innerHTML = html;
   if (type === "entries") {
-    const kind = $('#form [name=kind]'), account = $('#form [name=account_id]'), card = $('#form [name=card_id]'), destination = $('#form [name=to_account_id]');
-    const updateKind = () => { const transfer = kind.value === 'transfer'; destination.closest('label').classList.toggle('hidden', !transfer); destination.required = transfer; card.closest('label').classList.toggle('hidden', transfer); if (transfer) card.value = ''; else destination.value = ''; };
-    kind.addEventListener('change', updateKind); updateKind();
-    account.addEventListener('change', () => { if(account.value) card.value = ''; });
-    card.addEventListener('change', () => { if(card.value) account.value = ''; });
+    const kind = $("#form [name=kind]"),
+      account = $("#form [name=account_id]"),
+      card = $("#form [name=card_id]"),
+      destination = $("#form [name=to_account_id]"),
+      category = $("#form [name=category_id]");
+    const updateKind = () => {
+      const transfer = kind.value === "transfer",
+        expense = kind.value === "expense",
+        selected = category.value;
+      destination.closest("label").classList.toggle("hidden", !transfer);
+      destination.required = transfer;
+      account.required = transfer;
+      card.closest("label").classList.toggle("hidden", !expense);
+      category.closest("label").classList.toggle("hidden", transfer);
+      category.innerHTML =
+        '<option value="">Nenhuma</option>' +
+        state.categories
+          .filter((c) => c.kind === kind.value)
+          .map(
+            (c) => '<option value="' + c.id + '">' + esc(c.name) + "</option>",
+          )
+          .join("");
+      category.value = selected;
+      if (!expense) card.value = "";
+      if (!transfer) destination.value = "";
+      const generation = $("#form [name=generate_installments]");
+      if (generation) {
+        generation.disabled = transfer;
+        if (transfer) generation.checked = false;
+      }
+    };
+    kind.addEventListener("change", updateKind);
+    updateKind();
+    account.addEventListener("change", () => {
+      if (account.value) card.value = "";
+    });
+    card.addEventListener("change", () => {
+      if (card.value) account.value = "";
+    });
   }
+  $("#form-fields")
+    .querySelectorAll("textarea")
+    .forEach((x) => (x.maxLength = 1500));
+  const cost = $("#form [name=cost_center]");
+  if (cost) cost.maxLength = 100;
   $("#dialog").showModal();
 }
 $("#form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const button = e.target.querySelector("[type=submit]");
+  if (button.disabled) return;
   button.disabled = true;
   const values = Object.fromEntries(new FormData(e.target));
   for (const f of [
@@ -1102,14 +1356,31 @@ $("#form").addEventListener("submit", async (e) => {
     "installment_count",
   ])
     if (f in values && !values[f]) values[f] = null;
+  if (state.edit) values.version = state.edit.version;
+  if ("generate_installments" in values)
+    values.generate_installments = values.generate_installments === "on";
+  const payload = JSON.stringify(values);
+  if (state.lastWritePayload !== null && state.lastWritePayload !== payload)
+    state.writeKey = crypto.randomUUID();
+  state.lastWritePayload = payload;
   try {
-    const path = endpoint(state.mode + (state.edit ? "/" + state.edit.id : ""));
-    await api(path, {
+    const path =
+      "/api/s/" +
+      state.formSpace +
+      "/" +
+      state.mode +
+      (state.edit ? "/" + state.edit.id : "");
+    const result = await api(path, {
+      writeKey: state.writeKey,
       method: state.edit ? "PUT" : "POST",
-      body: JSON.stringify(values),
+      body: payload,
     });
     $("#dialog").close();
-    notify("Salvo com sucesso");
+    notify(
+      result.created_count > 1
+        ? `${result.created_count} parcelas criadas`
+        : "Salvo com sucesso",
+    );
     await load();
   } catch (err) {
     $("#form-error").textContent = err.message;
