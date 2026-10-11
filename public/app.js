@@ -52,6 +52,8 @@ const storage = {
 const state = {
   csrfToken: null,
   pendingEntries: [],
+  paymentEntries: [],
+  trashEntries: [],
   user: null,
   spaces: [],
   space: null,
@@ -69,6 +71,7 @@ const state = {
   search: "",
   kind: "all",
   status: "all",
+  order: "",
   dark: storage.get("theme") === "dark",
 };
 const endpoint = (p = "") => "/api/s/" + state.space.id + "/" + p;
@@ -101,18 +104,28 @@ function notify(s) {
 function showLogin() {
   closeNav();
   $("#dialog").close();
+  closeSecurity();
   Object.assign(state, {
     user: null,
+    space: null,
+    spaces: [],
+    edit: null,
+    lastWritePayload: null,
+    writeKey: null,
     csrfToken: null,
     summary: null,
     entries: [],
     pendingEntries: [],
+    paymentEntries: [],
+    trashEntries: [],
     accounts: [],
     cards: [],
     categories: [],
     contacts: [],
     audit: [],
   });
+  $("#form-fields").replaceChildren();
+  $("#form-error").textContent = "";
   $("#content").replaceChildren();
   $("#account-email").textContent = "";
   loadVersion++;
@@ -133,6 +146,7 @@ async function boot() {
   try {
     const r = await api("/api/me");
     state.csrfToken = r.csrfToken;
+    state.sessionIdleHours = r.sessionIdleHours || 12;
     state.user = r.user;
     state.spaces = r.spaces;
     state.space = r.spaces[0];
@@ -200,6 +214,7 @@ $("#spaces").addEventListener("click", async (e) => {
     state.search = "";
     state.kind = "all";
     state.status = "all";
+    state.order = "";
     await load();
   }
 });
@@ -245,6 +260,8 @@ async function load() {
       summary,
       entries,
       pendingEntries,
+      paymentEntries,
+      trashEntries,
       accounts,
       cards,
       categories,
@@ -254,6 +271,8 @@ async function load() {
       api(base + "summary?" + new URLSearchParams(period())),
       allEntries(base, period()),
       allEntries(base, { pending: true }),
+      allEntries(base, { ...period(), basis: "payment" }),
+      allEntries(base, { deleted: true }),
       api(base + "accounts"),
       api(base + "cards"),
       api(base + "categories"),
@@ -265,6 +284,8 @@ async function load() {
       summary,
       entries,
       pendingEntries,
+      paymentEntries,
+      trashEntries,
       accounts,
       cards,
       categories,
@@ -497,7 +518,7 @@ function overview() {
   );
 }
 function filteredEntries(bills = false) {
-  return (bills ? state.pendingEntries : state.entries).filter(
+  const rows = (bills ? state.pendingEntries : state.entries).filter(
     (t) =>
       (!bills || (!t.paid_date && t.kind !== "transfer")) &&
       (state.kind === "all" || t.kind === state.kind) &&
@@ -518,6 +539,17 @@ function filteredEntries(bills = false) {
         )
           .toLocaleLowerCase("pt-BR")
           .includes(state.search.toLocaleLowerCase("pt-BR"))),
+  );
+  const order = state.order || (bills ? "due-asc" : "due-desc");
+  return rows.sort((a, b) =>
+    order === "amount-desc"
+      ? Number(b.amount) - Number(a.amount)
+      : order === "amount-asc"
+        ? Number(a.amount) - Number(b.amount)
+        : order === "name"
+          ? a.description.localeCompare(b.description, "pt-BR")
+          : (order === "due-asc" ? 1 : -1) *
+            localDate(a.due_date).localeCompare(localDate(b.due_date)),
   );
 }
 function entryTable(bills) {
@@ -577,6 +609,27 @@ function entriesView(bills = false) {
           (state.status === v ? "selected" : "") +
           ">" +
           l +
+          "</option>",
+      )
+      .join("") +
+    '</select><select id="sort-filter" aria-label="Ordenar lançamentos">' +
+    [
+      ["due-asc", "Vencimento: mais próximo"],
+      ["due-desc", "Vencimento: mais distante"],
+      ["amount-desc", "Maior valor"],
+      ["amount-asc", "Menor valor"],
+      ["name", "Descrição: A a Z"],
+    ]
+      .map(
+        ([value, label]) =>
+          '<option value="' +
+          value +
+          '" ' +
+          ((state.order || (bills ? "due-asc" : "due-desc")) === value
+            ? "selected"
+            : "") +
+          ">" +
+          label +
           "</option>",
       )
       .join("") +
@@ -661,16 +714,14 @@ function assets(type) {
 function reports() {
   const inc = sum("income"),
     exp = sum("expense"),
-    paidInc =
-      state.entries
-        .filter((x) => x.kind === "income" && x.paid_date)
-        .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100,
-    paidExp =
-      state.entries
-        .filter((x) => x.kind === "expense" && x.paid_date)
-        .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100;
+    paidInc = Number(
+      state.summary.paidTotals?.find((x) => x.kind === "income")?.total || 0,
+    ),
+    paidExp = Number(
+      state.summary.paidTotals?.find((x) => x.kind === "expense")?.total || 0,
+    );
   return (
-    '<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">O demonstrativo usa os lançamentos do mês selecionado. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
+    '<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-paid">Exportar pagamentos do mês</button><button id="backup">Baixar cópia de segurança</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">Previsões usam o vencimento; valores recebidos e liquidados usam a data do pagamento, mesmo quando o vencimento pertence a outro mês. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
     section(
       "Demonstrativo do período",
       simpleLine("Receitas previstas", money(inc)) +
@@ -679,8 +730,8 @@ function reports() {
           "Resultado previsto",
           "<strong>" + money(inc - exp) + "</strong>",
         ) +
-        simpleLine("Receitas recebidas", money(paidInc)) +
-        simpleLine("Despesas liquidadas", money(paidExp)) +
+        simpleLine("Receitas recebidas no mês", money(paidInc)) +
+        simpleLine("Despesas liquidadas no mês", money(paidExp)) +
         simpleLine("Resultado liquidado", money(paidInc - paidExp)),
     ) +
     section(
@@ -709,15 +760,148 @@ function reports() {
     ) +
     "</div>" +
     section(
-      "Detalhamento para prestação de contas",
+      "Lançamentos por vencimento",
       table(
         ["Descrição", "Vencimento", "Tipo", "Valor", "Situação", ""],
         state.entries.map((t) => entryRow(t)),
       ),
+    ) +
+    section(
+      "Pagamentos e recebimentos no mês",
+      state.paymentEntries.length
+        ? table(
+            ["Descrição", "Pagamento", "Vencimento", "Tipo", "Valor"],
+            state.paymentEntries.map(
+              (t) =>
+                "<tr><td>" +
+                esc(t.description) +
+                "</td><td>" +
+                displayDate(t.paid_date) +
+                "</td><td>" +
+                displayDate(t.due_date) +
+                "</td><td>" +
+                esc(kindNames[t.kind]) +
+                '</td><td class="amount">' +
+                money(t.amount) +
+                "</td></tr>",
+            ),
+          )
+        : empty(
+            "Nenhum pagamento registrado.",
+            "Informe a data de pagamento ao liquidar um lançamento.",
+          ),
     )
   );
 }
+function trashView() {
+  return (
+    '<div class="guide">Lançamentos na lixeira ficam fora dos saldos e relatórios. Restaure um item para recuperar seu efeito nas contas. Cada parcela é restaurada individualmente.</div>' +
+    section(
+      "Lançamentos removidos",
+      state.trashEntries.length
+        ? table(
+            ["Descrição", "Valor", "Removido em", "Ações"],
+            state.trashEntries.map(
+              (t) =>
+                "<tr><td>" +
+                esc(t.description) +
+                '<div class="subtle">' +
+                displayDate(t.due_date) +
+                " · " +
+                esc(kindNames[t.kind]) +
+                '</div></td><td class="amount">' +
+                money(t.amount) +
+                "</td><td>" +
+                new Date(t.deleted_at).toLocaleString("pt-BR") +
+                '</td><td><button data-restore="' +
+                t.id +
+                '">Restaurar</button></td></tr>',
+            ),
+          )
+        : empty(
+            "A lixeira está vazia.",
+            "Os lançamentos removidos poderão ser recuperados aqui.",
+          ),
+    )
+  );
+}
+function auditDetails(row) {
+  const before = row.before_data || {},
+    after = row.after_data || {},
+    labels = {
+      description: "Descrição",
+      kind: "Tipo",
+      amount: "Valor",
+      due_date: "Vencimento",
+      paid_date: "Pagamento",
+      name: "Nome",
+      opening: "Saldo inicial",
+      credit_limit: "Limite",
+      closing_day: "Fechamento",
+      due_day: "Vencimento do cartão",
+      cost_center: "Centro de custo",
+      notes: "Observações",
+      installment_number: "Parcela",
+      installment_count: "Total de parcelas",
+      account_id: "Conta",
+      to_account_id: "Conta destino",
+      card_id: "Cartão",
+      category_id: "Categoria",
+      contact_id: "Contato",
+    };
+  const format = (key, value) =>
+    value == null || value === ""
+      ? "—"
+      : ["amount", "opening", "credit_limit"].includes(key)
+        ? money(value)
+        : ["due_date", "paid_date"].includes(key)
+          ? displayDate(value)
+          : key === "kind"
+            ? kindNames[value] || value
+            : key.endsWith("_id")
+              ? state[
+                  {
+                    account_id: "accounts",
+                    to_account_id: "accounts",
+                    card_id: "cards",
+                    category_id: "categories",
+                    contact_id: "contacts",
+                  }[key]
+                ].find((x) => String(x.id) === String(value))?.name ||
+                "Cadastro #" + value
+              : String(value);
+  const title =
+    after.description ||
+    before.description ||
+    after.name ||
+    before.name ||
+    "Registro #" + row.entity_id;
+  const changes = Object.keys(labels)
+    .filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))
+    .map(
+      (k) =>
+        "<div>" +
+        esc(labels[k]) +
+        ": " +
+        esc(format(k, before[k])) +
+        " → " +
+        esc(format(k, after[k])) +
+        "</div>",
+    )
+    .join("");
+  return (
+    "<b>" +
+    esc(title) +
+    "</b>" +
+    (row.action === "update" && changes
+      ? '<details class="audit-details"><summary>Ver alterações</summary>' +
+        changes +
+        "</details>"
+      : "")
+  );
+}
 const icons = {
+  trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',
   overview: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>',
   entries: '<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/>',
   bills:
@@ -786,6 +970,28 @@ document.addEventListener("keydown", (e) => {
   }
 });
 function bindActions(root) {
+  root.querySelectorAll("[data-restore]").forEach(
+    (button) =>
+      (button.onclick = async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        const row = state.trashEntries.find(
+          (x) => String(x.id) === button.dataset.restore,
+        );
+        try {
+          await api(endpoint("entries/" + row.id + "/restore"), {
+            method: "POST",
+            body: JSON.stringify({ version: row.version }),
+          });
+          notify("Lançamento restaurado");
+          await load();
+        } catch (err) {
+          notify(err.message);
+          button.disabled = false;
+        }
+      }),
+  );
+
   root.querySelectorAll("[data-edit-asset]").forEach(
     (x) =>
       (x.onclick = () => {
@@ -799,9 +1005,11 @@ function bindActions(root) {
   root.querySelectorAll("[data-settle]").forEach(
     (x) =>
       (x.onclick = () => {
-        const r = [...state.entries, ...state.pendingEntries].find(
-          (r) => String(r.id) === x.dataset.settle,
-        );
+        const r = [
+          ...state.entries,
+          ...state.pendingEntries,
+          ...state.paymentEntries,
+        ].find((r) => String(r.id) === x.dataset.settle);
         openForm("entries", { ...r, paid_date: today() });
         $("#form [name=paid_date]").focus();
       }),
@@ -826,9 +1034,11 @@ function bindActions(root) {
       (x.onclick = () =>
         openForm(
           "entries",
-          [...state.entries, ...state.pendingEntries].find(
-            (t) => String(t.id) === x.dataset.edit,
-          ),
+          [
+            ...state.entries,
+            ...state.pendingEntries,
+            ...state.paymentEntries,
+          ].find((t) => String(t.id) === x.dataset.edit),
         )),
   );
   root
@@ -863,6 +1073,7 @@ function render() {
       contacts: "Contatos",
       reports: "Prestação de contas",
       audit: "Histórico de ações",
+      trash: "Lixeira",
     },
     descriptions = {
       overview: "Um olhar sobre as contas, os gastos e o que vem pela frente.",
@@ -873,6 +1084,7 @@ function render() {
       categories: "Organize as receitas e despesas do seu jeito.",
       contacts: "Clientes, fornecedores e pessoas dos seus lançamentos.",
       reports: "Confira os números e compartilhe o demonstrativo.",
+      trash: "Recupere lançamentos removidos sem perder o histórico.",
       audit: "Consulte os registros de alterações neste ambiente.",
     };
   $("#heading").textContent = labels[state.view];
@@ -907,52 +1119,70 @@ function render() {
           ? entriesView(true)
           : ["accounts", "cards", "categories", "contacts"].includes(selected)
             ? assets(selected)
-            : selected === "reports"
-              ? reports()
-              : section(
-                  "Atividade recente",
-                  state.audit.length
-                    ? table(
-                        ["Ação", "Registro", "Data"],
-                        state.audit.map(
-                          (x) =>
-                            "<tr><td>" +
-                            esc(
-                              {
-                                create: "Criação",
-                                update: "Edição",
-                                delete: "Exclusão",
-                              }[x.action] || x.action,
-                            ) +
-                            "</td><td>" +
-                            esc(
-                              {
-                                entries: "Lançamento",
-                                accounts: "Conta",
-                                cards: "Cartão",
-                                categories: "Categoria",
-                                contacts: "Contato",
-                              }[x.entity] || x.entity,
-                            ) +
-                            " #" +
-                            x.entity_id +
-                            "</td><td>" +
-                            new Date(x.at).toLocaleString("pt-BR") +
-                            "</td></tr>",
+            : selected === "trash"
+              ? trashView()
+              : selected === "reports"
+                ? reports()
+                : section(
+                    "Atividade recente",
+                    state.audit.length
+                      ? table(
+                          [
+                            "Ação",
+                            "Registro",
+                            "Detalhes",
+                            "Responsável",
+                            "Data",
+                          ],
+                          state.audit.map(
+                            (x) =>
+                              "<tr><td>" +
+                              esc(
+                                {
+                                  create: "Criação",
+                                  update: "Edição",
+                                  delete: "Exclusão",
+                                  restore: "Restauração",
+                                }[x.action] || x.action,
+                              ) +
+                              "</td><td>" +
+                              esc(
+                                {
+                                  entries: "Lançamento",
+                                  accounts: "Conta",
+                                  cards: "Cartão",
+                                  categories: "Categoria",
+                                  contacts: "Contato",
+                                }[x.entity] || x.entity,
+                              ) +
+                              " #" +
+                              x.entity_id +
+                              "</td><td>" +
+                              auditDetails(x) +
+                              "</td><td>" +
+                              esc(x.actor || "Registro anterior") +
+                              "</td><td>" +
+                              new Date(x.at).toLocaleString("pt-BR") +
+                              "</td></tr>",
+                          ),
+                        )
+                      : empty(
+                          "Nenhuma alteração registrada.",
+                          "As ações realizadas neste ambiente aparecerão aqui.",
                         ),
-                      )
-                    : empty(
-                        "Nenhuma alteração registrada.",
-                        "As ações realizadas neste ambiente aparecerão aqui.",
-                      ),
-                );
+                  );
   $("#content").innerHTML =
     '<div class="period-bar"><span>Resumo mensal</span><div class="month-control"><button id="prev-month" aria-label="Mês anterior">‹</button><label for="month">Mês de referência</label><input type="month" id="month" value="' +
     state.month +
     '" required><button id="next-month" aria-label="Próximo mês">›</button></div></div>' +
     main;
-  if (selected === "bills")
-    $(".period-bar").innerHTML = "<span>Pendências de todos os meses</span>";
+  if (selected === "bills" || selected === "trash")
+    $(".period-bar").innerHTML =
+      "<span>" +
+      (selected === "trash"
+        ? "Lançamentos removidos"
+        : "Pendências de todos os meses") +
+      "</span>";
   if ($("#month"))
     $("#month").onchange = async (e) => {
       if (/^\d{4}-\d{2}$/.test(e.target.value)) {
@@ -969,6 +1199,15 @@ function render() {
   $("#csv-all")?.addEventListener("click", () => {
     location.href = endpoint("export.csv");
   });
+  $("#csv-paid")?.addEventListener("click", () => {
+    location.href =
+      endpoint("export.csv") +
+      "?" +
+      new URLSearchParams({ ...period(), basis: "payment" });
+  });
+  $("#backup")?.addEventListener("click", () => {
+    location.href = endpoint("backup.json");
+  });
   $("#print")?.addEventListener("click", () => window.print());
   bindActions($("#content"));
   const updateEntries = () => {
@@ -982,6 +1221,7 @@ function render() {
     ["search", "search"],
     ["kind-filter", "kind"],
     ["status-filter", "status"],
+    ["sort-filter", "order"],
   ]) {
     const field = $("#" + id);
     if (field)
@@ -992,13 +1232,33 @@ function render() {
   }
 }
 async function remove(type, id) {
-  if (!confirm("Excluir este registro? A ação não pode ser desfeita.")) return;
+  const record = (
+    type === "entries"
+      ? [...state.entries, ...state.pendingEntries, ...state.paymentEntries]
+      : state[type]
+  ).find((x) => String(x.id) === String(id));
+  if (!record) return notify("Atualize a página para localizar o registro.");
+  if (
+    !confirm(
+      type === "entries"
+        ? "Mover este lançamento para a lixeira? Ele poderá ser restaurado depois."
+        : "Excluir este cadastro? Esta ação não pode ser desfeita.",
+    )
+  )
+    return;
   try {
-    await api(endpoint(type + "/" + id), { method: "DELETE" });
-    notify("Registro excluído");
+    await api(endpoint(type + "/" + id), {
+      method: "DELETE",
+      body: JSON.stringify({ version: record.version }),
+    });
+    notify(
+      type === "entries"
+        ? "Lançamento movido para a lixeira"
+        : "Cadastro excluído",
+    );
     await load();
-  } catch (e) {
-    notify(e.message);
+  } catch (err) {
+    notify(err.message);
   }
 }
 function opts(type, selected) {
@@ -1386,6 +1646,99 @@ $("#form").addEventListener("submit", async (e) => {
     $("#form-error").textContent = err.message;
   } finally {
     button.disabled = false;
+  }
+});
+let securityVersion = 0;
+function closeSecurity() {
+  securityVersion++;
+  $("#security-dialog").close();
+  $("#password-form").reset();
+  $("#session-list").replaceChildren();
+  $("#security-error").textContent = "";
+}
+$("#close-security").onclick = closeSecurity;
+$("#security-dialog").addEventListener("cancel", (e) => {
+  if ($("#password-form button").disabled) e.preventDefault();
+  else closeSecurity();
+});
+async function refreshSessions() {
+  const version = ++securityVersion;
+  const sessions = await api("/api/sessions");
+  if (version !== securityVersion) return;
+  $("#session-list").innerHTML = sessions
+    .map(
+      (s) =>
+        '<div class="session-row"><b>' +
+        (s.current ? "Este dispositivo" : "Outro dispositivo") +
+        '</b><div class="subtle">' +
+        esc(s.user_agent || "Dispositivo não identificado") +
+        "</div><small>Último uso: " +
+        new Date(s.last_seen).toLocaleString("pt-BR") +
+        "</small></div>",
+    )
+    .join("");
+  $("#revoke-sessions").disabled = !sessions.some((s) => !s.current);
+}
+$("#account-security").onclick = async () => {
+  $("#security-error").textContent = "";
+  $("#session-policy").textContent =
+    `A sessão expira após ${state.sessionIdleHours} horas sem uso ou 7 dias após o login.`;
+  $("#password-form").reset();
+  $("#session-list").textContent = "Carregando acessos…";
+  $("#revoke-sessions").disabled = true;
+  $("#security-dialog").showModal();
+  try {
+    await refreshSessions();
+  } catch (err) {
+    $("#security-error").textContent = err.message;
+  }
+};
+$("#revoke-sessions").onclick = async () => {
+  const button = $("#revoke-sessions");
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await api("/api/sessions/revoke-others", { method: "POST", body: "{}" });
+    notify("Outros acessos encerrados");
+    await refreshSessions();
+  } catch (err) {
+    $("#security-error").textContent = err.message;
+    button.disabled = false;
+  }
+};
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const button = e.target.querySelector("button[type=submit]");
+  if (button.disabled) return;
+  const values = Object.fromEntries(new FormData(e.target));
+  if (values.new_password !== values.confirm_password) {
+    $("#security-error").textContent =
+      "A confirmação não corresponde à nova senha.";
+    return;
+  }
+  button.disabled = true;
+  $("#close-security").disabled = true;
+  $("#security-error").textContent = "";
+  try {
+    const result = await api("/api/password", {
+      method: "POST",
+      body: JSON.stringify(values),
+    });
+    state.csrfToken = result.csrfToken;
+    e.target.reset();
+    notify("Senha atualizada. Outros acessos foram encerrados.");
+    await refreshSessions();
+  } catch (err) {
+    $("#security-error").textContent = err.message;
+  } finally {
+    button.disabled = false;
+    $("#close-security").disabled = false;
+  }
+});
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) {
+    showLogin();
+    boot();
   }
 });
 boot();

@@ -184,6 +184,9 @@ test("valida datas reais, precisão monetária, textos e parcelas", async () => 
     { installment_number: 2, installment_count: 1 },
     { installment_number: 1 },
     { installment_count: 1.5 },
+    { installment_number: true, installment_count: 2 },
+    { paid_date: false },
+    { account_id: [bank.id] },
   ])
     await post("entries", entry(invalid)).expect(400);
   await post(
@@ -491,6 +494,341 @@ test("reinicialização conserva usuários e não ressuscita categorias excluíd
     pass,
   );
 });
+test("lixeira preserva dados, retira valores dos saldos e permite restauração com versão", async () => {
+  const r = (
+    await post(
+      "entries",
+      entry({
+        description: "Lixeira teste",
+        amount: "9.99",
+        paid_date: "2026-02-10",
+        account_id: bank.id,
+      }),
+    ).expect(201)
+  ).body;
+  const range = `/api/s/${sid}/summary?from=2026-01-01&to=2026-01-31`,
+    before = (await agent.get(range)).body;
+  const key = crypto.randomUUID(),
+    remove = () =>
+      agent
+        .delete(`/api/s/${sid}/entries/${r.id}`)
+        .set("X-CSRF-Token", token)
+        .set("Idempotency-Key", key)
+        .send({ version: r.version });
+  const removed = (await remove().expect(200)).body;
+  await remove().expect(200);
+  const after = (await agent.get(range)).body,
+    getBalance = (x) =>
+      Number(x.accounts.find((a) => a.id === bank.id).balance);
+  assert.equal(Math.round((getBalance(after) - getBalance(before)) * 100), 999);
+  assert.ok(
+    !(await agent.get(`/api/s/${sid}/entries`)).body.some((x) => x.id === r.id),
+  );
+  assert.ok(
+    (await agent.get(`/api/s/${sid}/entries?deleted=true`)).body.some(
+      (x) => x.id === r.id,
+    ),
+  );
+  assert.equal(
+    (await db.query("SELECT id FROM entries WHERE id=$1", [r.id])).rowCount,
+    1,
+  );
+  await put(`entries/${r.id}`, entry({ version: removed.version })).expect(409);
+  assert.doesNotMatch(
+    (await agent.get(`/api/s/${sid}/export.csv`)).text,
+    /Lixeira teste/,
+  );
+  await agent
+    .post(`/api/s/${other}/entries/${r.id}/restore`)
+    .set("X-CSRF-Token", token)
+    .set("Idempotency-Key", crypto.randomUUID())
+    .send({ version: removed.version })
+    .expect(409);
+  const restoreKey = crypto.randomUUID(),
+    restored = (
+      await post(
+        `entries/${r.id}/restore`,
+        { version: removed.version },
+        restoreKey,
+      ).expect(200)
+    ).body;
+  await post(
+    `entries/${r.id}/restore`,
+    { version: removed.version },
+    restoreKey,
+  ).expect(200);
+  assert.equal(restored.version, 3);
+  assert.equal(restored.deleted_at, null);
+  assert.equal(getBalance((await agent.get(range)).body), getBalance(before));
+  await agent
+    .delete(`/api/s/${sid}/entries/${r.id}`)
+    .set("X-CSRF-Token", token)
+    .set("Idempotency-Key", crypto.randomUUID())
+    .send({ version: 1 })
+    .expect(409);
+});
+test("exclusão de cadastros rejeita versão antiga e dependências da lixeira", async () => {
+  const account = (
+    await post("accounts", {
+      name: "Versão para excluir",
+      kind: "bank",
+      opening: 0,
+    }).expect(201)
+  ).body;
+  const updated = (
+    await put(`accounts/${account.id}`, {
+      name: "Atualizado",
+      kind: "bank",
+      opening: 0,
+      version: account.version,
+    }).expect(200)
+  ).body;
+  const remove = (v) =>
+    agent
+      .delete(`/api/s/${sid}/accounts/${account.id}`)
+      .set("X-CSRF-Token", token)
+      .set("Idempotency-Key", crypto.randomUUID())
+      .send({ version: v });
+  await remove(account.version).expect(409);
+  await remove(updated.version).expect(200);
+  const cat = (
+    await post("categories", {
+      name: "Vínculo lixeira",
+      kind: "expense",
+    }).expect(201)
+  ).body;
+  const e = (await post("entries", entry({ category_id: cat.id })).expect(201))
+    .body;
+  await agent
+    .delete(`/api/s/${sid}/entries/${e.id}`)
+    .set("X-CSRF-Token", token)
+    .set("Idempotency-Key", crypto.randomUUID())
+    .send({ version: e.version })
+    .expect(200);
+  await agent
+    .delete(`/api/s/${sid}/categories/${cat.id}`)
+    .set("X-CSRF-Token", token)
+    .set("Idempotency-Key", crypto.randomUUID())
+    .send({ version: cat.version })
+    .expect(400);
+});
+test("auditoria mostra autor e valores anteriores e posteriores sem credenciais", async () => {
+  const e = (
+    await post("entries", entry({ description: "Antes audit" })).expect(201)
+  ).body;
+  await put(
+    `entries/${e.id}`,
+    entry({ description: "Depois audit", amount: "12.30", version: e.version }),
+  ).expect(200);
+  const audit = (await agent.get(`/api/s/${sid}/audit`)).body.find(
+    (x) => x.entity_id === e.id && x.action === "update",
+  );
+  assert.equal(audit.actor, env.ADMIN_EMAIL);
+  assert.equal(audit.before_data.description, "Antes audit");
+  assert.equal(audit.after_data.description, "Depois audit");
+  assert.equal(audit.after_data.amount, "12.30");
+  assert.ok(!("pass" in audit.after_data) && !("salt" in audit.before_data));
+});
+test("relatório e CSV usam o pagamento mesmo quando o vencimento é de outro mês", async () => {
+  const r = (
+    await post(
+      "entries",
+      entry({
+        description: "Vencimento setembro pago fevereiro",
+        amount: "17.18",
+        due_date: "2026-09-20",
+        paid_date: "2026-02-12",
+      }),
+    ).expect(201)
+  ).body;
+  const summary = (
+    await agent.get(`/api/s/${sid}/summary?from=2026-02-01&to=2026-02-28`)
+  ).body;
+  assert.ok(
+    Number(summary.paidTotals.find((x) => x.kind === "expense").total) >= 17.18,
+  );
+  const due = (
+      await agent.get(`/api/s/${sid}/entries?from=2026-02-01&to=2026-02-28`)
+    ).body,
+    paid = (
+      await agent.get(
+        `/api/s/${sid}/entries?from=2026-02-01&to=2026-02-28&basis=payment`,
+      )
+    ).body;
+  assert.ok(!due.some((x) => x.id === r.id));
+  assert.ok(paid.some((x) => x.id === r.id));
+  assert.match(
+    (
+      await agent.get(
+        `/api/s/${sid}/export.csv?from=2026-02-01&to=2026-02-28&basis=payment`,
+      )
+    ).text,
+    /Vencimento setembro pago fevereiro/,
+  );
+  await agent.get(`/api/s/${sid}/entries?basis=invalid`).expect(400);
+  await agent.get(`/api/s/${sid}/entries?deleted=invalid`).expect(400);
+  const csv = (await agent.get(`/api/s/${sid}/export.csv`)).text;
+  assert.match(csv, /"Conta destino"/);
+  assert.match(csv, /"Caixa"/);
+});
+test("backup consistente contém lixeira e cadastros somente do ambiente autorizado", async () => {
+  const backup = await agent.get(`/api/s/${sid}/backup.json`).expect(200),
+    data = backup.body;
+  assert.equal(backup.headers["cache-control"], "no-store");
+  assert.match(backup.headers["content-disposition"], /attachment/);
+  assert.equal(data.format, "casa-nossas-delicias-backup");
+  assert.equal(data.space.id, sid);
+  for (const type of [
+    "accounts",
+    "cards",
+    "categories",
+    "contacts",
+    "entries",
+    "audit",
+  ])
+    assert.ok(data[type].every((x) => x.space_id === sid));
+  assert.ok(data.entries.some((x) => x.deleted_at));
+  assert.ok(!("users" in data) && !("sessions" in data) && !("access" in data));
+  await agent.get("/api/s/999/backup.json").expect(403);
+});
+test("sessões expiram por inatividade e podem ser revogadas sem encerrar o dispositivo atual", async () => {
+  const secondary = request.agent(app);
+  await secondary
+    .post("/api/login")
+    .set("User-Agent", "Teste dispositivo")
+    .send({ email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD })
+    .expect(200);
+  const sessions = (await agent.get("/api/sessions").expect(200)).body;
+  assert.equal(sessions.filter((x) => x.current).length, 1);
+  assert.ok(sessions.some((x) => x.user_agent === "Teste dispositivo"));
+  assert.ok(
+    sessions.every((x) => !("token" in x) && /^[a-f0-9-]{36}$/.test(x.id)),
+  );
+  await agent
+    .post("/api/sessions/revoke-others")
+    .set("X-CSRF-Token", token)
+    .send({})
+    .expect(200);
+  await secondary.get("/api/me").expect(401);
+  await agent.get("/api/me").expect(200);
+  const idle = request.agent(app);
+  await idle
+    .post("/api/login")
+    .set("User-Agent", "Inativo teste")
+    .send({ email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD })
+    .expect(200);
+  await db.query(
+    "UPDATE sessions SET last_seen=NOW()-INTERVAL '13 hours' WHERE user_agent='Inativo teste'",
+  );
+  await idle.get("/api/me").expect(401);
+  await agent.get("/api/me").expect(200);
+  assert.throws(() => createApp({ db, sessionIdleHours: 0 }));
+});
+test("limitação por conta funciona quando as tentativas chegam de IPs diferentes", async () => {
+  const limited = createApp({
+    db,
+    trustProxy: 1,
+    loginLimit: 100,
+    loginAccountLimit: 2,
+    logger: { error: () => {} },
+  });
+  for (let i = 1; i <= 2; i++)
+    await request(limited)
+      .post("/api/login")
+      .set("X-Forwarded-For", "192.0.2." + i)
+      .send({ email: env.ADMIN_EMAIL.toUpperCase(), password: "wrong" })
+      .expect(401);
+  await request(limited)
+    .post("/api/login")
+    .set("X-Forwarded-For", "192.0.2.3")
+    .send({ email: env.ADMIN_EMAIL, password: "wrong" })
+    .expect(429);
+});
+test("troca de senha exige a atual, reverte falhas e gira sessão e CSRF", async () => {
+  const oldPass = env.ADMIN_PASSWORD,
+    newPass = "a-new-long-password-for-tests";
+  const otherAgent = request.agent(app);
+  await otherAgent
+    .post("/api/login")
+    .send({ email: env.ADMIN_EMAIL, password: oldPass })
+    .expect(200);
+  const originalSession = (await agent.get("/api/sessions")).body.find(
+      (x) => x.current,
+    ),
+    originalToken = (
+      await db.query("SELECT token FROM sessions WHERE public_id=$1", [
+        originalSession.id,
+      ])
+    ).rows[0].token;
+  const change = (body) =>
+    agent.post("/api/password").set("X-CSRF-Token", token).send(body);
+  await change({
+    current_password: "wrong",
+    new_password: newPass,
+    confirm_password: newPass,
+  }).expect(400);
+  await change({
+    current_password: oldPass,
+    new_password: "short",
+    confirm_password: "short",
+  }).expect(400);
+  await db.query(
+    "CREATE FUNCTION reject_password() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'failure'; END $$",
+  );
+  await db.query(
+    "CREATE TRIGGER reject_password BEFORE UPDATE OF pass ON users FOR EACH ROW EXECUTE FUNCTION reject_password()",
+  );
+  await change({
+    current_password: oldPass,
+    new_password: newPass,
+    confirm_password: newPass,
+  }).expect(500);
+  await otherAgent.get("/api/me").expect(200);
+  assert.equal(
+    (
+      await db.query("SELECT token FROM sessions WHERE public_id=$1", [
+        originalSession.id,
+      ])
+    ).rows[0].token,
+    originalToken,
+  );
+  await db.query("DROP TRIGGER reject_password ON users");
+  await db.query("DROP FUNCTION reject_password()");
+  const result = await change({
+    current_password: oldPass,
+    new_password: newPass,
+    confirm_password: newPass,
+  }).expect(200);
+  assert.notEqual(result.body.csrfToken, token);
+  token = result.body.csrfToken;
+  assert.notEqual(
+    (
+      await db.query("SELECT token FROM sessions WHERE public_id=$1", [
+        originalSession.id,
+      ])
+    ).rows[0].token,
+    originalToken,
+  );
+  await otherAgent.get("/api/me").expect(401);
+  await agent.get("/api/me").expect(200);
+  await request(app)
+    .post("/api/login")
+    .send({ email: env.ADMIN_EMAIL, password: oldPass })
+    .expect(401);
+  await request(app)
+    .post("/api/login")
+    .send({ email: env.ADMIN_EMAIL, password: newPass })
+    .expect(200);
+  assert.equal(
+    (await agent.get("/api/sessions")).body.filter((x) => x.current).length,
+    1,
+  );
+  env.ADMIN_PASSWORD = newPass;
+  await post("entries", entry({ description: "Gravação após troca" })).expect(
+    201,
+  );
+});
+
 test("logout revoga sessão e expiração impede novo acesso", async () => {
   await agent
     .post("/api/logout")

@@ -56,7 +56,20 @@ export function moneyValue(value, { positive = false, signed = false } = {}) {
   return number.toFixed(2);
 }
 export const validId = (value) =>
-  /^(?:[1-9]\d*)$/.test(String(value)) && Number.isSafeInteger(Number(value));
+  ["string", "number"].includes(typeof value) &&
+  /^(?:[1-9]\d*)$/.test(String(value)) &&
+  Number.isSafeInteger(Number(value));
+export function integerValue(value, max, label) {
+  if (
+    !["string", "number"].includes(typeof value) ||
+    !/^\d+$/.test(String(value)) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) < 1 ||
+    Number(value) > max
+  )
+    throw error(`${label} deve estar entre 1 e ${max}`);
+  return Number(value);
+}
 export function monthDate(date, offset) {
   const [year, month, day] = date.split("-").map(Number);
   const result = new Date(Date.UTC(year, month - 1 + offset, 1, 12));

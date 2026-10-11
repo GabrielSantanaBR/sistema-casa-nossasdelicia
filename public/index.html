@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f4f3ef" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Financeiro · Casa & Nossas Delícias</title>
-    <link rel="stylesheet" href="/style.css?v=4" />
+    <link rel="stylesheet" href="/style.css?v=5" />
   </head>
   <body>
     <a class="skip-link" href="#content">Ir para o conteúdo</a>
@@ -93,12 +93,16 @@
           <button data-view="contacts">
             <span class="nav-icon" data-icon="contacts"></span>Contatos
           </button>
+          <button data-view="trash">
+            <span class="nav-icon" data-icon="trash"></span>Lixeira
+          </button>
           <button data-view="audit">
             <span class="nav-icon" data-icon="audit"></span>Histórico de ações
           </button>
         </nav>
         <div class="side-footer">
           <span class="eyebrow">SUA CONTA</span><span id="account-email"></span
+          ><button id="account-security">Segurança da conta</button
           ><button id="logout">
             Sair da conta <span aria-hidden="true">→</span>
           </button>
@@ -166,7 +170,71 @@
         </footer>
       </form>
     </dialog>
+    <dialog id="security-dialog" aria-labelledby="security-title">
+      <div class="security-content">
+        <header class="modal-header">
+          <div>
+            <span class="eyebrow">SUA CONTA</span>
+            <h2 id="security-title">Segurança e acesso</h2>
+          </div>
+          <button
+            id="close-security"
+            type="button"
+            class="icon-button"
+            aria-label="Fechar segurança"
+          >
+            ×
+          </button>
+        </header>
+        <div class="security-grid">
+          <section>
+            <h3>Trocar senha</h3>
+            <p class="subtle">
+              A troca encerra os outros acessos e mantém este dispositivo
+              conectado.
+            </p>
+            <form id="password-form">
+              <label
+                >Senha atual<input
+                  type="password"
+                  name="current_password"
+                  autocomplete="current-password"
+                  maxlength="500"
+                  required /></label
+              ><label
+                >Nova senha · 16 a 128 caracteres<input
+                  type="password"
+                  name="new_password"
+                  autocomplete="new-password"
+                  minlength="16"
+                  maxlength="128"
+                  required /></label
+              ><label
+                >Confirmar nova senha<input
+                  type="password"
+                  name="confirm_password"
+                  autocomplete="new-password"
+                  minlength="16"
+                  maxlength="128"
+                  required /></label
+              ><button type="submit" class="primary">Atualizar senha</button>
+            </form>
+          </section>
+          <section>
+            <h3>Dispositivos conectados</h3>
+            <p class="subtle" id="session-policy">
+              A sessão expira após 12 horas sem uso ou 7 dias após o login.
+            </p>
+            <div id="session-list" aria-live="polite"></div>
+            <button id="revoke-sessions" type="button">
+              Encerrar outros acessos
+            </button>
+          </section>
+        </div>
+        <p id="security-error" class="error" role="alert"></p>
+      </div>
+    </dialog>
     <div id="toast" class="toast hidden" role="status"></div>
-    <script type="module" src="/app.js?v=4"></script>
+    <script type="module" src="/app.js?v=5"></script>
   </body>
 </html>

@@ -15,6 +15,7 @@ import {
   todayBR,
   moneyValue,
   validId,
+  integerValue,
   monthDate,
   csvCell,
 } from "./finance.js";
@@ -61,11 +62,41 @@ const uuid = (value) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
   );
-const audit = (db, req, action, entity, id) =>
+const audit = (db, req, action, entity, id, before = null, after = null) =>
   db.query(
-    "INSERT INTO audit(space_id,user_id,action,entity,entity_id) VALUES($1,$2,$3,$4,$5)",
-    [req.sid, req.user.id, action, entity, id],
+    "INSERT INTO audit(space_id,user_id,action,entity,entity_id,before_data,after_data) VALUES($1,$2,$3,$4,$5,$6,$7)",
+    [
+      req.sid,
+      req.user.id,
+      action,
+      entity,
+      id,
+      before ? JSON.stringify(before) : null,
+      after ? JSON.stringify(after) : null,
+    ],
   );
+const setSessionCookie = (res, token, production) =>
+  res.cookie("fin_sid", token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: production,
+    maxAge: 604800000,
+    path: "/",
+  });
+async function verifyPassword(password, user) {
+  if (typeof password !== "string" || password.length > 500) return false;
+  const attempt = await passwordHash(
+    password,
+    user?.salt || "invalid-user-fixed-salt",
+  );
+  return (
+    !!user &&
+    crypto.timingSafeEqual(
+      Buffer.from(attempt, "hex"),
+      Buffer.from(user.pass, "hex"),
+    )
+  );
+}
 function period(req) {
   const from = req.query.from ?? todayBR().slice(0, 7) + "-01";
   if (!validDate(from)) throw error("Período inválido");
@@ -90,7 +121,7 @@ function catalogValues(table, body) {
   if (table === "cards") {
     result.credit_limit = moneyValue(body.credit_limit ?? 0);
     for (const key of ["closing_day", "due_day"]) {
-      const day = Number(body[key]);
+      const day = integerValue(body[key], 31, "Dia");
       if (!Number.isInteger(day) || day < 1 || day > 31)
         throw error("Informe dias entre 1 e 31");
       result[key] = day;
@@ -107,14 +138,15 @@ async function entryValues(db, req) {
     kind: body.kind,
     amount: moneyValue(body.amount, { positive: true }),
     due_date: body.due_date,
-    paid_date: body.paid_date || null,
+    paid_date:
+      body.paid_date == null || body.paid_date === "" ? null : body.paid_date,
     cost_center: safeText(body.cost_center, 100, "Centro de custo"),
     notes: safeText(body.notes, 1500, "Observações"),
   };
   if (
     !["income", "expense", "transfer"].includes(value.kind) ||
     !validDate(value.due_date) ||
-    (value.paid_date && !validDate(value.paid_date))
+    (value.paid_date !== null && !validDate(value.paid_date))
   )
     throw error("Verifique o tipo e as datas do lançamento");
   if (value.paid_date && value.paid_date > todayBR())
@@ -164,7 +196,9 @@ async function entryValues(db, req) {
     throw error("Use uma conta para registrar receitas");
   for (const field of ["installment_number", "installment_count"]) {
     const number =
-      body[field] == null || body[field] === "" ? null : Number(body[field]);
+      body[field] == null || body[field] === ""
+        ? null
+        : integerValue(body[field], 360, "Parcela");
     if (
       number !== null &&
       (!Number.isInteger(number) || number < 1 || number > 360)
@@ -189,9 +223,17 @@ export function createApp({
   publicOrigin = "",
   trustProxy = production ? 1 : false,
   loginLimit = 10,
+  loginAccountLimit = 30,
+  sessionIdleHours = 12,
   apiLimit = 600,
   logger = console,
 } = {}) {
+  if (
+    !Number.isFinite(sessionIdleHours) ||
+    sessionIdleHours < 1 ||
+    sessionIdleHours > 168
+  )
+    throw Error("SESSION_IDLE_HOURS deve estar entre 1 e 168");
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", trustProxy);
@@ -256,6 +298,22 @@ export function createApp({
       legacyHeaders: false,
       message: { error: "Muitas tentativas de acesso. Aguarde 15 minutos." },
     }),
+    rateLimit({
+      windowMs: 900000,
+      limit: loginAccountLimit,
+      keyGenerator: (req) =>
+        hash(
+          String(req.body.email ?? "")
+            .trim()
+            .toLowerCase(),
+        ),
+      skipSuccessfulRequests: true,
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      message: {
+        error: "Muitas tentativas para esta conta. Aguarde 15 minutos.",
+      },
+    }),
     run(async (req, res) => {
       const email = safeText(req.body.email, 255, "E-mail", true).toLowerCase();
       if (
@@ -266,26 +324,34 @@ export function createApp({
       const user = (
         await db.query("SELECT * FROM users WHERE email=$1", [email])
       ).rows[0];
-      const attempt = await passwordHash(
-        req.body.password,
-        user?.salt || "invalid-user-fixed-salt",
-      );
-      if (
-        !user ||
-        !crypto.timingSafeEqual(
-          Buffer.from(attempt, "hex"),
-          Buffer.from(user.pass, "hex"),
-        )
-      )
+      if (!(await verifyPassword(req.body.password, user)))
         throw error("Credenciais inválidas", 401);
       const token = crypto.randomBytes(32).toString("hex");
       const client = await db.connect();
       try {
         await client.query("BEGIN");
+        const current = (
+          await client.query("SELECT pass FROM users WHERE id=$1 FOR SHARE", [
+            user.id,
+          ])
+        ).rows[0];
+        if (!current || current.pass !== user.pass)
+          throw error("Credenciais inválidas", 401);
         await client.query("DELETE FROM sessions WHERE expires<NOW()");
         await client.query(
-          "INSERT INTO sessions(token,user_id,expires) VALUES($1,$2,NOW()+INTERVAL '7 days')",
-          [hash(token), user.id],
+          "INSERT INTO sessions(token,user_id,expires,user_agent) VALUES($1,$2,NOW()+INTERVAL '7 days',$3)",
+          [
+            hash(token),
+            user.id,
+            (req.get("user-agent") || "Dispositivo não identificado").slice(
+              0,
+              200,
+            ),
+          ],
+        );
+        await client.query(
+          "DELETE FROM sessions WHERE public_id IN (SELECT public_id FROM sessions WHERE user_id=$1 ORDER BY created_at DESC,public_id DESC OFFSET 20)",
+          [user.id],
         );
         await client.query("COMMIT");
       } catch (err) {
@@ -294,15 +360,7 @@ export function createApp({
       } finally {
         client.release();
       }
-      res
-        .cookie("fin_sid", token, {
-          httpOnly: true,
-          sameSite: "strict",
-          secure: production,
-          maxAge: 604800000,
-          path: "/",
-        })
-        .json({ ok: true });
+      setSessionCookie(res, token, production).json({ ok: true });
     }),
   );
   app.use(
@@ -312,8 +370,8 @@ export function createApp({
       if (!/^[a-f0-9]{64}$/.test(token)) throw error("Faça login", 401);
       const user = (
         await db.query(
-          "SELECT u.id,u.email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=$1 AND s.expires>NOW()",
-          [hash(token)],
+          "SELECT u.id,u.email,s.public_id session_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=$1 AND s.expires>NOW() AND s.last_seen>NOW()-($2::float*INTERVAL '1 hour')",
+          [hash(token), sessionIdleHours],
         )
       ).rows[0];
       if (!user) throw error("Sessão expirada", 401);
@@ -329,7 +387,12 @@ export function createApp({
             403,
           );
       }
-      req.user = user;
+      await db.query(
+        "UPDATE sessions SET last_seen=NOW() WHERE token=$1 AND last_seen<NOW()-INTERVAL '1 minute'",
+        [hash(token)],
+      );
+      req.sessionId = user.session_id;
+      req.user = { id: user.id, email: user.email };
       req.csrf = csrf(token);
       next();
     }),
@@ -340,6 +403,7 @@ export function createApp({
       res.json({
         user: req.user,
         csrfToken: req.csrf,
+        sessionIdleHours,
         spaces: (
           await db.query(
             "SELECT s.* FROM spaces s JOIN access a ON a.space_id=s.id WHERE a.user_id=$1 ORDER BY s.id",
@@ -363,6 +427,99 @@ export function createApp({
           secure: production,
         })
         .json({ ok: true });
+    }),
+  );
+  app.get(
+    "/api/sessions",
+    run(async (req, res) =>
+      res.json(
+        (
+          await db.query(
+            "SELECT public_id id,created_at,last_seen,user_agent,public_id=$2::uuid current FROM sessions WHERE user_id=$1 AND expires>NOW() AND last_seen>NOW()-($3::float*INTERVAL '1 hour') ORDER BY last_seen DESC",
+            [req.user.id, req.sessionId, sessionIdleHours],
+          )
+        ).rows,
+      ),
+    ),
+  );
+  app.post(
+    "/api/sessions/revoke-others",
+    run(async (req, res) => {
+      await db.query(
+        "DELETE FROM sessions WHERE user_id=$1 AND public_id<>$2",
+        [req.user.id, req.sessionId],
+      );
+      res.json({ ok: true });
+    }),
+  );
+  app.post(
+    "/api/password",
+    rateLimit({
+      windowMs: 900000,
+      limit: 5,
+      keyGenerator: (req) => String(req.user.id),
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      message: {
+        error: "Muitas tentativas de troca de senha. Aguarde 15 minutos.",
+      },
+    }),
+    run(async (req, res) => {
+      const { current_password, new_password, confirm_password } = req.body;
+      if (
+        typeof new_password !== "string" ||
+        new_password.length < 16 ||
+        new_password.length > 128 ||
+        !new_password.trim() ||
+        new_password !== confirm_password
+      )
+        throw error("Confirme uma senha de 16 a 128 caracteres");
+      if (new_password === current_password)
+        throw error("Escolha uma senha diferente da atual");
+      const client = await db.connect();
+      const newToken = crypto.randomBytes(32).toString("hex");
+      try {
+        await client.query("BEGIN");
+        const user = (
+          await client.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [
+            req.user.id,
+          ])
+        ).rows[0];
+        if (!(await verifyPassword(current_password, user)))
+          throw error("Senha atual incorreta", 400);
+        const active = (
+          await client.query(
+            "SELECT token FROM sessions WHERE token=$1 AND expires>NOW() AND last_seen>NOW()-($2::float*INTERVAL '1 hour') FOR UPDATE",
+            [hash(cookieToken(req)), sessionIdleHours],
+          )
+        ).rows[0];
+        if (!active) throw error("Sessão expirada", 401);
+        const salt = crypto.randomBytes(20).toString("hex"),
+          pass = await passwordHash(new_password, salt);
+        await client.query("UPDATE users SET pass=$2,salt=$3 WHERE id=$1", [
+          req.user.id,
+          pass,
+          salt,
+        ]);
+        await client.query(
+          "DELETE FROM sessions WHERE user_id=$1 AND public_id<>$2",
+          [req.user.id, req.sessionId],
+        );
+        await client.query(
+          "UPDATE sessions SET token=$2,created_at=NOW(),last_seen=NOW(),expires=NOW()+INTERVAL '7 days' WHERE token=$1",
+          [hash(cookieToken(req)), hash(newToken)],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+      setSessionCookie(res, newToken, production).json({
+        ok: true,
+        csrfToken: csrf(newToken),
+      });
     }),
   );
   app.use(
@@ -390,6 +547,18 @@ export function createApp({
     const client = await db.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT id FROM users WHERE id=$1 FOR KEY SHARE", [
+        req.user.id,
+      ]);
+      if (
+        !(
+          await client.query(
+            "SELECT token FROM sessions WHERE token=$1 AND expires>NOW() AND last_seen>NOW()-($2::float*INTERVAL '1 hour') FOR SHARE",
+            [hash(cookieToken(req)), sessionIdleHours],
+          )
+        ).rowCount
+      )
+        throw error("Sessão expirada", 401);
       await client.query(
         "INSERT INTO write_requests(user_id,space_id,key,payload_hash) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
         [req.user.id, req.sid, key, digest],
@@ -454,7 +623,7 @@ export function createApp({
                 [req.sid, ...values],
               )
             ).rows[0];
-            await audit(client, req, "create", table, row.id);
+            await audit(client, req, "create", table, row.id, null, row);
             return row;
           },
           201,
@@ -467,6 +636,12 @@ export function createApp({
         write(req, res, async (client) => {
           if (!validId(req.params.id) || !validId(req.body.version))
             throw error("Registro inválido. Reabra o cadastro.");
+          const before = (
+            await client.query(
+              `SELECT * FROM ${table} WHERE id=$1 AND space_id=$2 FOR UPDATE`,
+              [req.params.id, req.sid],
+            )
+          ).rows[0];
           const values = catalogValues(table, req.body);
           if (
             table === "categories" &&
@@ -492,7 +667,7 @@ export function createApp({
               "O cadastro foi alterado ou excluído. Atualize a página antes de editar.",
               409,
             );
-          await audit(client, req, "update", table, row.id);
+          await audit(client, req, "update", table, row.id, before, row);
           return row;
         }),
       ),
@@ -501,15 +676,20 @@ export function createApp({
       `/api/s/:sid/${table}/:id`,
       run(async (req, res) =>
         write(req, res, async (client) => {
-          if (!validId(req.params.id)) throw error("Registro inválido");
+          if (!validId(req.params.id) || !validId(req.body.version))
+            throw error("Registro inválido. Atualize o cadastro.");
           const row = (
             await client.query(
-              `DELETE FROM ${table} WHERE id=$1 AND space_id=$2 RETURNING id`,
-              [req.params.id, req.sid],
+              `DELETE FROM ${table} WHERE id=$1 AND space_id=$2 AND version=$3 RETURNING *`,
+              [req.params.id, req.sid, req.body.version],
             )
           ).rows[0];
-          if (!row) throw error("Não encontrado", 404);
-          await audit(client, req, "delete", table, row.id);
+          if (!row)
+            throw error(
+              "O cadastro mudou ou foi excluído. Atualize a página.",
+              409,
+            );
+          await audit(client, req, "delete", table, row.id, row);
           return { ok: true };
         }),
       ),
@@ -519,7 +699,25 @@ export function createApp({
     "/api/s/:sid/entries",
     run(async (req, res) => {
       const args = [req.sid],
-        where = ["space_id=$1"];
+        where = [
+          "space_id=$1",
+          req.query.deleted === "true"
+            ? "deleted_at IS NOT NULL"
+            : "deleted_at IS NULL",
+        ];
+      if (
+        req.query.basis != null &&
+        !["due", "payment"].includes(req.query.basis)
+      )
+        throw error("Referência de data inválida");
+      for (const key of ["deleted", "pending"])
+        if (
+          req.query[key] != null &&
+          !["true", "false"].includes(req.query[key])
+        )
+          throw error("Filtro inválido");
+      const dateColumn =
+        req.query.basis === "payment" ? "paid_date" : "due_date";
       for (const [field, op] of [
         ["from", ">="],
         ["to", "<="],
@@ -528,7 +726,7 @@ export function createApp({
           if (!validDate(req.query[field]))
             throw error("Data de filtro inválida");
           args.push(req.query[field]);
-          where.push(`due_date${op}$${args.length}`);
+          where.push(`${dateColumn}${op}$${args.length}`);
         }
       if (req.query.from && req.query.to && req.query.from > req.query.to)
         throw error("Período inválido");
@@ -548,7 +746,7 @@ export function createApp({
       res.json(
         (
           await db.query(
-            `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY due_date DESC,id DESC LIMIT $${args.length - 1} OFFSET $${args.length}`,
+            `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ${req.query.deleted === "true" ? "deleted_at" : dateColumn} DESC,id DESC LIMIT $${args.length - 1} OFFSET $${args.length}`,
             args,
           )
         ).rows,
@@ -601,7 +799,7 @@ export function createApp({
                 [req.sid, ...values, req.user.id],
               )
             ).rows[0];
-            await audit(client, req, "create", "entries", row.id);
+            await audit(client, req, "create", "entries", row.id, null, row);
             first ??= row;
           }
           return { ...first, created_count: count };
@@ -616,13 +814,19 @@ export function createApp({
       write(req, res, async (client) => {
         if (!validId(req.params.id) || !validId(req.body.version))
           throw error("Registro inválido. Reabra o lançamento.");
+        const before = (
+          await client.query(
+            "SELECT * FROM entries WHERE id=$1 AND space_id=$2 AND deleted_at IS NULL FOR UPDATE",
+            [req.params.id, req.sid],
+          )
+        ).rows[0];
         const value = await entryValues(client, req),
           fields = columns.filter((key) => key !== "installment_group"),
           values = fields.map((key) => value[key] ?? null),
           assignments = fields.map((key, i) => `${key}=$${i + 3}`).join(",");
         const row = (
           await client.query(
-            `UPDATE entries SET ${assignments},version=version+1 WHERE id=$1 AND space_id=$2 AND version=$${values.length + 3} RETURNING *`,
+            `UPDATE entries SET ${assignments},version=version+1 WHERE id=$1 AND space_id=$2 AND deleted_at IS NULL AND version=$${values.length + 3} RETURNING *`,
             [req.params.id, req.sid, ...values, req.body.version],
           )
         ).rows[0];
@@ -631,7 +835,7 @@ export function createApp({
             "O lançamento foi alterado ou excluído. Atualize a página antes de editar.",
             409,
           );
-        await audit(client, req, "update", "entries", row.id);
+        await audit(client, req, "update", "entries", row.id, before, row);
         return row;
       }),
     ),
@@ -640,16 +844,55 @@ export function createApp({
     "/api/s/:sid/entries/:id",
     run(async (req, res) =>
       write(req, res, async (client) => {
-        if (!validId(req.params.id)) throw error("Registro inválido");
-        const row = (
+        if (!validId(req.params.id) || !validId(req.body.version))
+          throw error("Registro inválido. Reabra o lançamento.");
+        const before = (
           await client.query(
-            "DELETE FROM entries WHERE id=$1 AND space_id=$2 RETURNING id",
+            "SELECT * FROM entries WHERE id=$1 AND space_id=$2 AND deleted_at IS NULL FOR UPDATE",
             [req.params.id, req.sid],
           )
         ).rows[0];
-        if (!row) throw error("Não encontrado", 404);
-        await audit(client, req, "delete", "entries", row.id);
-        return { ok: true };
+        const row = (
+          await client.query(
+            "UPDATE entries SET deleted_at=NOW(),deleted_by=$4,version=version+1 WHERE id=$1 AND space_id=$2 AND version=$3 AND deleted_at IS NULL RETURNING *",
+            [req.params.id, req.sid, req.body.version, req.user.id],
+          )
+        ).rows[0];
+        if (!row)
+          throw error(
+            "O lançamento mudou ou já está na lixeira. Atualize a página.",
+            409,
+          );
+        await audit(client, req, "delete", "entries", row.id, before, row);
+        return { ok: true, id: row.id, version: row.version };
+      }),
+    ),
+  );
+  app.post(
+    "/api/s/:sid/entries/:id/restore",
+    run(async (req, res) =>
+      write(req, res, async (client) => {
+        if (!validId(req.params.id) || !validId(req.body.version))
+          throw error("Registro inválido. Atualize a lixeira.");
+        const before = (
+          await client.query(
+            "SELECT * FROM entries WHERE id=$1 AND space_id=$2 AND deleted_at IS NOT NULL FOR UPDATE",
+            [req.params.id, req.sid],
+          )
+        ).rows[0];
+        const row = (
+          await client.query(
+            "UPDATE entries SET deleted_at=NULL,deleted_by=NULL,version=version+1 WHERE id=$1 AND space_id=$2 AND version=$3 AND deleted_at IS NOT NULL RETURNING *",
+            [req.params.id, req.sid, req.body.version],
+          )
+        ).rows[0];
+        if (!row)
+          throw error(
+            "O lançamento mudou ou já foi restaurado. Atualize a lixeira.",
+            409,
+          );
+        await audit(client, req, "restore", "entries", row.id, before, row);
+        return row;
       }),
     ),
   );
@@ -660,35 +903,50 @@ export function createApp({
         args = [req.sid, from, to];
       const totals = (
         await db.query(
-          "SELECT kind,COALESCE(SUM(amount),0) total FROM entries WHERE space_id=$1 AND due_date BETWEEN $2 AND $3 GROUP BY kind",
+          "SELECT kind,COALESCE(SUM(amount),0) total FROM active_entries WHERE space_id=$1 AND due_date BETWEEN $2 AND $3 GROUP BY kind",
           args,
         )
       ).rows;
       const byCategory = (
         await db.query(
-          "SELECT COALESCE(c.name,'Sem categoria') label,e.kind,SUM(e.amount) total FROM entries e LEFT JOIN categories c ON c.id=e.category_id AND c.space_id=e.space_id WHERE e.space_id=$1 AND e.due_date BETWEEN $2 AND $3 AND e.kind<>'transfer' GROUP BY 1,2 ORDER BY total DESC",
+          "SELECT COALESCE(c.name,'Sem categoria') label,e.kind,SUM(e.amount) total FROM active_entries e LEFT JOIN categories c ON c.id=e.category_id AND c.space_id=e.space_id WHERE e.space_id=$1 AND e.due_date BETWEEN $2 AND $3 AND e.kind<>'transfer' GROUP BY 1,2 ORDER BY total DESC",
           args,
         )
       ).rows;
       const accounts = (
         await db.query(
-          "SELECT a.id,a.name,a.kind,a.opening+COALESCE((SELECT SUM(CASE WHEN e.kind='income' THEN e.amount ELSE -e.amount END) FROM entries e WHERE e.account_id=a.id AND e.space_id=a.space_id AND e.paid_date IS NOT NULL AND e.paid_date<=$2),0)+COALESCE((SELECT SUM(e.amount) FROM entries e WHERE e.to_account_id=a.id AND e.kind='transfer' AND e.paid_date IS NOT NULL AND e.paid_date<=$2 AND e.space_id=a.space_id),0) balance FROM accounts a WHERE a.space_id=$1 ORDER BY a.name",
+          "SELECT a.id,a.name,a.kind,a.opening+COALESCE((SELECT SUM(CASE WHEN e.kind='income' THEN e.amount ELSE -e.amount END) FROM active_entries e WHERE e.account_id=a.id AND e.space_id=a.space_id AND e.paid_date IS NOT NULL AND e.paid_date<=$2),0)+COALESCE((SELECT SUM(e.amount) FROM active_entries e WHERE e.to_account_id=a.id AND e.kind='transfer' AND e.paid_date IS NOT NULL AND e.paid_date<=$2 AND e.space_id=a.space_id),0) balance FROM accounts a WHERE a.space_id=$1 ORDER BY a.name",
           [req.sid, todayBR()],
         )
       ).rows;
       const cards = (
         await db.query(
-          "SELECT c.id,c.name,c.credit_limit,COALESCE(SUM(CASE WHEN e.kind='expense' THEN e.amount ELSE 0 END),0) purchases FROM cards c LEFT JOIN entries e ON e.card_id=c.id AND e.space_id=c.space_id AND e.due_date BETWEEN $2 AND $3 WHERE c.space_id=$1 GROUP BY c.id ORDER BY c.name",
+          "SELECT c.id,c.name,c.credit_limit,COALESCE(SUM(CASE WHEN e.kind='expense' THEN e.amount ELSE 0 END),0) purchases FROM cards c LEFT JOIN active_entries e ON e.card_id=c.id AND e.space_id=c.space_id AND e.due_date BETWEEN $2 AND $3 WHERE c.space_id=$1 GROUP BY c.id ORDER BY c.name",
           args,
         )
       ).rows;
       const overdue = (
         await db.query(
-          "SELECT COUNT(*)::int count,COALESCE(SUM(amount),0) amount FROM entries WHERE space_id=$1 AND paid_date IS NULL AND due_date<$2 AND kind<>'transfer'",
+          "SELECT COUNT(*)::int count,COALESCE(SUM(amount),0) amount FROM active_entries WHERE space_id=$1 AND paid_date IS NULL AND due_date<$2 AND kind<>'transfer'",
           [req.sid, todayBR()],
         )
       ).rows[0];
-      res.json({ totals, byCategory, accounts, cards, overdue, from, to });
+      const paidTotals = (
+        await db.query(
+          "SELECT kind,COALESCE(SUM(amount),0) total FROM active_entries WHERE space_id=$1 AND paid_date BETWEEN $2 AND $3 GROUP BY kind",
+          args,
+        )
+      ).rows;
+      res.json({
+        totals,
+        paidTotals,
+        byCategory,
+        accounts,
+        cards,
+        overdue,
+        from,
+        to,
+      });
     }),
   );
   app.get(
@@ -697,7 +955,7 @@ export function createApp({
       res.json(
         (
           await db.query(
-            "SELECT action,entity,entity_id,at FROM audit WHERE space_id=$1 ORDER BY id DESC LIMIT 100",
+            "SELECT a.id,a.action,a.entity,a.entity_id,a.at,a.before_data,a.after_data,u.email actor FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.space_id=$1 ORDER BY a.id DESC LIMIT 100",
             [req.sid],
           )
         ).rows,
@@ -707,16 +965,23 @@ export function createApp({
   app.get(
     "/api/s/:sid/export.csv",
     run(async (req, res) => {
+      if (
+        req.query.basis != null &&
+        !["due", "payment"].includes(req.query.basis)
+      )
+        throw error("Referência de data inválida");
+      const dateColumn =
+        req.query.basis === "payment" ? "paid_date" : "due_date";
       const args = [req.sid],
         where = ["e.space_id=$1"];
       if (req.query.from != null || req.query.to != null) {
         const range = period(req);
         args.push(range.from, range.to);
-        where.push("e.due_date BETWEEN $2 AND $3");
+        where.push(`e.${dateColumn} BETWEEN $2 AND $3`);
       }
       const rows = (
         await db.query(
-          `SELECT e.id,e.description,e.kind,e.amount,e.due_date,e.paid_date,a.name account,c.name card,cat.name category,con.name contact,e.cost_center,e.installment_number,e.installment_count,e.notes FROM entries e LEFT JOIN accounts a ON a.id=e.account_id AND a.space_id=e.space_id LEFT JOIN cards c ON c.id=e.card_id AND c.space_id=e.space_id LEFT JOIN categories cat ON cat.id=e.category_id AND cat.space_id=e.space_id LEFT JOIN contacts con ON con.id=e.contact_id AND con.space_id=e.space_id WHERE ${where.join(" AND ")} ORDER BY e.due_date DESC,e.id DESC`,
+          `SELECT e.id,e.description,e.kind,e.amount,e.due_date,e.paid_date,a.name account,c.name card,cat.name category,con.name contact,dest.name destination,e.cost_center,e.installment_number,e.installment_count,e.notes FROM active_entries e LEFT JOIN accounts a ON a.id=e.account_id AND a.space_id=e.space_id LEFT JOIN accounts dest ON dest.id=e.to_account_id AND dest.space_id=e.space_id LEFT JOIN cards c ON c.id=e.card_id AND c.space_id=e.space_id LEFT JOIN categories cat ON cat.id=e.category_id AND cat.space_id=e.space_id LEFT JOIN contacts con ON con.id=e.contact_id AND con.space_id=e.space_id WHERE ${where.join(" AND ")} ORDER BY e.due_date DESC,e.id DESC`,
           args,
         )
       ).rows;
@@ -728,6 +993,7 @@ export function createApp({
         "due_date",
         "paid_date",
         "account",
+        "destination",
         "card",
         "category",
         "contact",
@@ -744,6 +1010,7 @@ export function createApp({
         "Vencimento",
         "Pagamento",
         "Conta",
+        "Conta destino",
         "Cartão",
         "Categoria",
         "Contato",
@@ -780,6 +1047,52 @@ export function createApp({
               ),
             ].join("\r\n"),
         );
+    }),
+  );
+  app.get(
+    "/api/s/:sid/backup.json",
+    run(async (req, res) => {
+      const client = await db.connect();
+      let data;
+      try {
+        await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        data = {
+          format: "casa-nossas-delicias-backup",
+          version: 1,
+          exported_at: new Date().toISOString(),
+          space: (
+            await client.query("SELECT id,name,kind FROM spaces WHERE id=$1", [
+              req.sid,
+            ])
+          ).rows[0],
+        };
+        for (const table of [
+          "accounts",
+          "cards",
+          "categories",
+          "contacts",
+          "entries",
+          "audit",
+        ])
+          data[table] = (
+            await client.query(
+              `SELECT * FROM ${table} WHERE space_id=$1 ORDER BY id`,
+              [req.sid],
+            )
+          ).rows;
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+      res
+        .set({
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Disposition": `attachment; filename="backup-${req.sid}-${todayBR()}.json"`,
+        })
+        .send(JSON.stringify(data));
     }),
   );
   app.use("/api", (req, res) =>
@@ -849,6 +1162,7 @@ async function start() {
     db,
     production,
     publicOrigin,
+    sessionIdleHours: Number(process.env.SESSION_IDLE_HOURS || 12),
     trustProxy: process.env.TRUST_PROXY_HOPS
       ? Number(process.env.TRUST_PROXY_HOPS)
       : production

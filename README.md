@@ -4,16 +4,19 @@ Sistema web de gestão financeira em português, com dois ambientes separados: *
 
 ## Funcionalidades implementadas
 
-- Login privado por e-mail e senha; sessão HTTP-only expira em 7 dias.
+- Login privado por e-mail e senha; sessão HTTP-only com limite de 7 dias e expiração após 12 horas sem uso (configurável).
+- Tela **Segurança da conta** com dispositivos conectados, encerramento dos outros acessos e troca de senha mediante confirmação da senha atual. A troca gira o cookie e o token CSRF.
 - Dois ambientes com isolamento de acesso e de dados em todas as consultas da API.
 - Dashboard mensal com receitas, despesas, resultado previsto, pendências, gastos por categoria, cartões e saldos.
 - Criação, edição e exclusão de contas bancárias/caixas, cartões, categorias, clientes e fornecedores.
 - Lançamentos de receita, despesa e transferência; vencimento, liquidação, conta ou cartão, categoria, centro de custo, fornecedor/cliente, notas e identificação de parcelas.
-- Contas pendentes e atrasadas de todo o histórico, com ações para registrar pagamento ou recebimento; edição e exclusão de lançamentos.
+- Contas pendentes e atrasadas de todo o histórico, com ações para registrar pagamento ou recebimento; edição e exclusão de lançamentos com recuperação pela lixeira.
 - Relatório mensal e exportação do mês ou do histórico integral em CSV compatível com Excel, com nomes dos cadastros e colunas em português.
-- Registro básico de auditoria para criações, edições e exclusões.
+- Auditoria com responsável, valores anteriores/posteriores e histórico de restaurações.
+- Cópia de segurança em JSON do ambiente selecionado, com todos os cadastros, lançamentos (incluindo lixeira) e auditoria, sem credenciais de autenticação.
 - Interface com abas Casa/Nossas Delícias, tema claro/escuro, menu móvel, busca e filtros por tipo/situação.
-- Resumo mensal com navegação por mês, próximos vencimentos e cadastros em listas.
+- Resumo mensal com navegação por mês, próximos vencimentos, ordenação de lançamentos e cadastros em listas.
+- Valores previstos por vencimento e valores liquidados por data de pagamento. Exportação específica de pagamentos do mês, com conta de origem e destino em transferências.
 
 ## Implantar no Railway
 
@@ -33,7 +36,7 @@ O primeiro usuário é criado **somente se ainda não houver usuários**. Altera
 
 ## Segurança operacional
 
-Nunca grave senhas no código ou README. Mantenha o repositório sem dados de produção, habilite backups e restauração do PostgreSQL, proteja as variáveis de ambiente e limite o acesso à conta administrativa. A API usa cookies HTTP-only, Secure em produção e SameSite=Strict, senha derivada com scrypt, limitação de tentativas de login, validação de origem, token CSRF por sessão e isolamento por ambiente. Gravações e auditoria são feitas na mesma transação. Uma chave de idempotência evita duplicação em novas tentativas, e um número de versão bloqueia edições desatualizadas. Valores têm até duas casas decimais; datas e referências são validadas no servidor. A política CSP restringe scripts à origem do site e bloqueia incorporação em frames. Respostas da API não ficam em cache, e células CSV com fórmulas são neutralizadas. Nenhuma aplicação deve ser considerada invulnerável; faça uma revisão adicional antes de armazenar dados sensíveis reais.
+Nunca grave senhas no código ou README. Mantenha o repositório sem dados de produção, habilite backups e restauração do PostgreSQL, proteja as variáveis de ambiente e limite o acesso à conta administrativa. A API usa cookies HTTP-only, Secure em produção e SameSite=Strict, senha derivada com scrypt, limitação de tentativas de login, validação de origem, token CSRF por sessão e isolamento por ambiente. Gravações e auditoria são feitas na mesma transação, com nova verificação da sessão antes de alterar dados. A limitação de login funciona por endereço IP e por conta. Uma chave de idempotência evita duplicação em novas tentativas, e um número de versão bloqueia edições desatualizadas. Valores têm até duas casas decimais; datas e referências são validadas no servidor. A política CSP restringe scripts à origem do site e bloqueia incorporação em frames. Respostas da API não ficam em cache, e células CSV com fórmulas são neutralizadas. Nenhuma aplicação deve ser considerada invulnerável; faça uma revisão adicional antes de armazenar dados sensíveis reais.
 
 ## Limites importantes da versão
 
@@ -58,3 +61,13 @@ npm test
 Os testes de API executam PostgreSQL isolado com PGlite, sem depender do banco de produção. Cobrem autenticação, CSRF, isolamento entre ambientes, validações, versões, idempotência, reversão de transações, transferências, parcelas, paginação e exportação. Os testes da interface usam jsdom para navegação, edição, falhas de conexão e logout. O GitHub Actions executa as mesmas verificações a cada alteração.
 
 No Railway, `RAILWAY_PUBLIC_DOMAIN` define a origem permitida automaticamente. Fora da plataforma, configure `PUBLIC_ORIGIN` com a URL HTTPS completa quando houver proxy ou domínio personalizado. `TRUST_PROXY_HOPS` aceita o número de proxies confiáveis; em produção o padrão é 1.
+
+## Lixeira, backup e acesso
+
+Excluir um lançamento o move para a **Lixeira** e retira seu efeito dos saldos, pendências, compras no cartão e relatórios. Restaurar devolve esse efeito. A lixeira não apaga itens automaticamente; cadastros referenciados por esses itens continuam protegidos contra exclusão. Cadastros sem vínculos ainda têm exclusão definitiva, com confirmação e versão para impedir remoção desatualizada.
+
+Em **Prestação de contas**, **Baixar cópia de segurança** exporta um retrato consistente do ambiente atual. Esse JSON é um arquivo de recuperação e conferência dos dados; a versão atual não tem importação automática. Salve a cópia em um local privado.
+
+Senhas não são armazenadas de forma legível. **Segurança da conta** permite definir uma nova senha de 16 a 128 caracteres, informando a senha atual. Alterar `ADMIN_PASSWORD` no Railway não substitui a senha de um usuário existente. A atualização do código não redefine senhas existentes.
+
+`SESSION_IDLE_HOURS` configura o limite de inatividade (padrão 12, intervalo 1–168 horas). O limite absoluto continua em 7 dias. A lista de sessões mostra identificadores públicos e informações do navegador; ela não expõe o cookie de autenticação.

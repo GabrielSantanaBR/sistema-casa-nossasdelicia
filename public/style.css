@@ -1281,3 +1281,55 @@ dialog {
     max-height: calc(100dvh - 16px);
   }
 }
+
+.security-content {
+  padding: 28px;
+}
+#security-dialog {
+  width: min(850px, calc(100% - 28px));
+}
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+}
+.security-grid h3 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+#password-form {
+  display: grid;
+  gap: 16px;
+}
+.session-row {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.session-row small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+#revoke-sessions {
+  margin-top: 18px;
+}
+.audit-details {
+  font-size: 12px;
+  line-height: 1.8;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+.audit-details summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+@media (max-width: 760px) {
+  .security-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+  .security-content {
+    padding: 20px;
+  }
+}

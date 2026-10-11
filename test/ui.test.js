@@ -84,7 +84,22 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
       { id: "1", version: 1, name: "Pessoa", kind: "other", notes: "Nota" },
     ],
     audit: [],
+    sessions: [
+      {
+        id: "test-id",
+        current: true,
+        user_agent: "Browser teste",
+        last_seen: new Date().toISOString(),
+      },
+      {
+        id: "other-id",
+        current: false,
+        user_agent: "<img src=x onerror=alert(1)>",
+        last_seen: new Date().toISOString(),
+      },
+    ],
     summary: {
+      paidTotals: [{ kind: "expense", total: "0.30" }],
       totals: [{ kind: "expense", total: "0.30" }],
       byCategory: [],
       accounts: [{ id: "1", name: "Banco", balance: "100" }],
@@ -108,6 +123,11 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
     else if (path === "/api/logout") {
       status = failLogout ? 500 : 200;
       result = { error: "Falha ao sair" };
+    } else if (path === "/api/sessions/revoke-others") {
+      data.sessions = data.sessions.filter((x) => x.current);
+      result = { ok: true };
+    } else if (path === "/api/password") {
+      result = { ok: true, csrfToken: "b".repeat(64) };
     } else if (opts.method && opts.method !== "GET") {
       if (failWrite) {
         failWrite = false;
@@ -121,9 +141,18 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
       const key = path.split("?")[0].split("/").at(-1);
       result =
         key === "entries"
-          ? path.includes("pending=true")
-            ? [entries[1], old]
-            : entries
+          ? path.includes("deleted=true")
+            ? [
+                {
+                  ...old,
+                  id: "4",
+                  version: 2,
+                  deleted_at: new Date().toISOString(),
+                },
+              ]
+            : path.includes("pending=true")
+              ? [entries[1], old]
+              : entries
           : data[key];
     }
     return {
@@ -263,6 +292,54 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
     click("#close-nav");
     assert.equal($(".main").inert, false);
     assert.equal($("#sidebar").inert, true);
+    click("#nav [data-view=bills]");
+    $("#sort-filter").value = "amount-desc";
+    event("#sort-filter", "change");
+    assert.match($("#entry-results tbody tr").textContent, /Pendente antiga/);
+    click("#nav [data-view=trash]");
+    assert.equal($("#month"), null);
+    assert.ok($('[data-restore="4"]'));
+    click('[data-restore="4"]');
+    await settle();
+    let restored = requests.findLast((r) => r.path.endsWith("/restore"));
+    assert.equal(JSON.parse(restored.opts.body).version, 2);
+    click("#nav [data-view=entries]");
+    click('[data-delete="1"]');
+    await settle();
+    const deleted = requests.findLast((r) => r.opts.method === "DELETE");
+    assert.equal(JSON.parse(deleted.opts.body).version, 1);
+    click("#account-security");
+    await settle();
+    assert.equal($("#security-dialog").open, true);
+    assert.match($("#session-list").textContent, /Este dispositivo/);
+    assert.equal($("#session-list img"), null);
+    click("#revoke-sessions");
+    await settle();
+    assert.equal($("#revoke-sessions").disabled, true);
+    $("#password-form [name=current_password]").value = "mock-old-password";
+    $("#password-form [name=new_password]").value = "mock-new-long-password";
+    $("#password-form [name=confirm_password]").value = "different";
+    event("#password-form", "submit");
+    await settle();
+    assert.match($("#security-error").textContent, /confirmação/);
+    $("#password-form [name=confirm_password]").value =
+      "mock-new-long-password";
+    event("#password-form", "submit");
+    await settle();
+    assert.equal($("#password-form [name=new_password]").value, "");
+    click("#close-security");
+    assert.equal($("#security-dialog").open, false);
+    click("#add");
+    $("[name=description]").value = "Nova sessão";
+    $("[name=amount]").value = "1";
+    event("#form", "submit");
+    await settle();
+    assert.equal(
+      requests.findLast(
+        (r) => r.path.endsWith("/entries") && r.opts.method === "POST",
+      ).opts.headers["X-CSRF-Token"],
+      "b".repeat(64),
+    );
     failLogout = true;
     click("#logout");
     await settle();
@@ -272,6 +349,8 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
     await settle();
     assert.equal($("#login").classList.contains("hidden"), false);
     assert.equal($("#content").children.length, 0);
+    assert.equal($("#form-fields").children.length, 0);
+    assert.equal($("#password-form [name=current_password]").value, "");
     assert.equal($("#account-email").textContent, "");
     assert.deepEqual(errors, []);
   } finally {
