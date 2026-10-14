@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f4f3ef" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Financeiro · Casa & Nossas Delícias</title>
-    <link rel="stylesheet" href="/style.css?v=6" />
+    <link rel="stylesheet" href="/style.css?v=7" />
   </head>
   <body>
     <a class="skip-link" href="#content">Ir para o conteúdo</a>
@@ -69,6 +69,14 @@
           <button data-view="overview" class="active">
             <span class="nav-icon" data-icon="overview"></span>Visão geral
           </button>
+          <button data-view="sales" class="business-only hidden">
+            <span class="nav-icon" data-icon="reports"></span>Vendas e
+            comprovantes
+          </button>
+          <button data-view="purchases" class="business-only hidden">
+            <span class="nav-icon" data-icon="entries"></span>Compras de
+            materiais
+          </button>
           <button data-view="entries">
             <span class="nav-icon" data-icon="entries"></span>Lançamentos
           </button>
@@ -80,6 +88,10 @@
             contas
           </button>
           <span class="side-label">ORGANIZAR</span>
+          <button data-view="products" class="business-only hidden">
+            <span class="nav-icon" data-icon="categories"></span>Doces e
+            materiais
+          </button>
           <button data-view="accounts">
             <span class="nav-icon" data-icon="accounts"></span>Contas e caixas
           </button>
@@ -90,7 +102,11 @@
             <span class="nav-icon" data-icon="categories"></span>Categorias
           </button>
           <button data-view="contacts">
-            <span class="nav-icon" data-icon="contacts"></span>Contatos
+            <span class="nav-icon" data-icon="contacts"></span
+            ><span id="contacts-label">Contatos</span>
+          </button>
+          <button data-view="business-profile" class="business-only hidden">
+            <span class="nav-icon" data-icon="accounts"></span>Dados da doceria
           </button>
           <button data-view="trash">
             <span class="nav-icon" data-icon="trash"></span>Lixeira
@@ -234,6 +250,6 @@
       </div>
     </dialog>
     <div id="toast" class="toast hidden" role="status"></div>
-    <script type="module" src="/app.js?v=5"></script>
+    <script type="module" src="/app.js?v=7"></script>
   </body>
 </html>

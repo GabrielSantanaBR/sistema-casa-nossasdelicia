@@ -36,6 +36,14 @@ export async function initialize(pool, env = process.env) {
       "ALTER TABLE entries ADD COLUMN IF NOT EXISTS deleted_by BIGINT REFERENCES users(id)",
       "ALTER TABLE audit ADD COLUMN IF NOT EXISTS before_data JSONB",
       "ALTER TABLE audit ADD COLUMN IF NOT EXISTS after_data JSONB",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS document TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT ''",
+      "CREATE TABLE IF NOT EXISTS products(id BIGSERIAL PRIMARY KEY,space_id BIGINT NOT NULL REFERENCES spaces(id),name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('product','material')),unit TEXT NOT NULL,default_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK(default_price>=0),version INTEGER NOT NULL DEFAULT 1)",
+      "CREATE INDEX IF NOT EXISTS products_space ON products(space_id)",
+      "CREATE TABLE IF NOT EXISTS business_profiles(id BIGSERIAL PRIMARY KEY,space_id BIGINT UNIQUE NOT NULL REFERENCES spaces(id),name TEXT NOT NULL,document TEXT NOT NULL DEFAULT '',address TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1)",
+      "CREATE TABLE IF NOT EXISTS document_counters(space_id BIGINT NOT NULL REFERENCES spaces(id),kind TEXT NOT NULL CHECK(kind IN ('sale','purchase')),last_value BIGINT NOT NULL,PRIMARY KEY(space_id,kind))",
+      "CREATE TABLE IF NOT EXISTS business_documents(id BIGSERIAL PRIMARY KEY,space_id BIGINT NOT NULL REFERENCES spaces(id),entry_id BIGINT UNIQUE NOT NULL REFERENCES entries(id),number BIGINT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('sale','purchase')),issued_date DATE NOT NULL,party_id BIGINT NOT NULL REFERENCES contacts(id),party_snapshot JSONB NOT NULL,issuer_snapshot JSONB NOT NULL,items JSONB NOT NULL,reference TEXT NOT NULL DEFAULT '',UNIQUE(space_id,kind,number))",
+      "CREATE INDEX IF NOT EXISTS business_documents_space_date ON business_documents(space_id,issued_date,id)",
       "CREATE OR REPLACE VIEW active_entries AS SELECT * FROM entries WHERE deleted_at IS NULL",
       "CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires)",
       "CREATE INDEX IF NOT EXISTS entries_space_pending ON entries(space_id,due_date) WHERE paid_date IS NULL",
@@ -116,6 +124,9 @@ export async function initialize(pool, env = process.env) {
         "INSERT INTO app_settings(key) VALUES('category_presets_v1') ON CONFLICT DO NOTHING",
       );
     }
+    await db.query(
+      "INSERT INTO business_profiles(space_id,name) SELECT id,name FROM spaces WHERE kind='business' ON CONFLICT(space_id) DO NOTHING",
+    );
     if (!(await db.query("SELECT id FROM users LIMIT 1")).rowCount) {
       const email = safeText(
           env.ADMIN_EMAIL,

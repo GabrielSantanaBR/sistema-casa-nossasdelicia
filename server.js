@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { initialize } from "./database.js";
+import { registerBusinessRoutes, units } from "./business.js";
 import {
   error,
   hash,
@@ -50,12 +51,14 @@ const catalog = {
   accounts: ["name", "kind", "opening"],
   cards: ["name", "credit_limit", "closing_day", "due_day"],
   categories: ["name", "kind"],
-  contacts: ["name", "kind", "notes"],
+  contacts: ["name", "kind", "notes", "document", "address"],
+  products: ["name", "kind", "unit", "default_price"],
 };
 const catalogKinds = {
   accounts: ["bank", "cash", "savings", "investment"],
   categories: ["expense", "income"],
   contacts: ["supplier", "customer", "other"],
+  products: ["product", "material"],
 };
 const uuid = (value) =>
   typeof value === "string" &&
@@ -129,6 +132,15 @@ function catalogValues(table, body) {
   }
   if (table === "contacts")
     result.notes = safeText(body.notes, 1500, "Observações");
+  if (table === "contacts") {
+    result.document = safeText(body.document, 50, "CPF/CNPJ");
+    result.address = safeText(body.address, 300, "Endereço");
+  }
+  if (table === "products") {
+    if (!units.includes(body.unit)) throw error("Unidade inválida");
+    result.unit = body.unit;
+    result.default_price = moneyValue(body.default_price ?? 0);
+  }
   return catalog[table].map((key) => result[key]);
 }
 async function entryValues(db, req) {
@@ -526,16 +538,15 @@ export function createApp({
     "/api/s/:sid",
     run(async (req, res, next) => {
       if (!validId(req.params.sid)) throw error("Ambiente inválido");
-      if (
-        !(
-          await db.query(
-            "SELECT 1 FROM access WHERE user_id=$1 AND space_id=$2",
-            [req.user.id, req.params.sid],
-          )
-        ).rowCount
-      )
-        throw error("Sem acesso", 403);
+      const space = (
+        await db.query(
+          "SELECT s.kind FROM access a JOIN spaces s ON s.id=a.space_id WHERE a.user_id=$1 AND a.space_id=$2",
+          [req.user.id, req.params.sid],
+        )
+      ).rows[0];
+      if (!space) throw error("Sem acesso", 403);
       req.sid = Number(req.params.sid);
+      req.spaceKind = space.kind;
       next();
     }),
   );
@@ -594,6 +605,7 @@ export function createApp({
       client.release();
     }
   }
+  registerBusinessRoutes({ app, db, write, run, audit, entryValues });
   for (const [table, fields] of Object.entries(catalog)) {
     app.get(
       `/api/s/:sid/${table}`,
@@ -643,6 +655,37 @@ export function createApp({
             )
           ).rows[0];
           const values = catalogValues(table, req.body);
+          if (
+            table === "contacts" &&
+            before &&
+            before.kind !== req.body.kind &&
+            (
+              await client.query(
+                "SELECT 1 FROM business_documents WHERE party_id=$1 AND space_id=$2 LIMIT 1",
+                [req.params.id, req.sid],
+              )
+            ).rowCount
+          )
+            throw error(
+              "Este contato já está vinculado a compras ou vendas. Mantenha o tipo ou cadastre outro contato.",
+            );
+          if (
+            table === "products" &&
+            before &&
+            (before.kind !== req.body.kind || before.unit !== req.body.unit) &&
+            (
+              await client.query(
+                "SELECT 1 FROM business_documents WHERE space_id=$1 AND items @> $2::jsonb LIMIT 1",
+                [
+                  req.sid,
+                  JSON.stringify([{ product_id: String(req.params.id) }]),
+                ],
+              )
+            ).rowCount
+          )
+            throw error(
+              "Este item já foi usado. Cadastre outro item para mudar o tipo ou a unidade.",
+            );
           if (
             table === "categories" &&
             (
@@ -746,7 +789,7 @@ export function createApp({
       res.json(
         (
           await db.query(
-            `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ${req.query.deleted === "true" ? "deleted_at" : dateColumn} DESC,id DESC LIMIT $${args.length - 1} OFFSET $${args.length}`,
+            `SELECT entries.*,(SELECT id FROM business_documents d WHERE d.entry_id=entries.id) AS document_id FROM entries WHERE ${where.join(" AND ")} ORDER BY ${req.query.deleted === "true" ? "deleted_at" : dateColumn} DESC,id DESC LIMIT $${args.length - 1} OFFSET $${args.length}`,
             args,
           )
         ).rows,
@@ -814,6 +857,18 @@ export function createApp({
       write(req, res, async (client) => {
         if (!validId(req.params.id) || !validId(req.body.version))
           throw error("Registro inválido. Reabra o lançamento.");
+        if (
+          (
+            await client.query(
+              "SELECT id FROM business_documents WHERE entry_id=$1 AND space_id=$2",
+              [req.params.id, req.sid],
+            )
+          ).rowCount
+        )
+          throw error(
+            "Edite os itens pela tela de compras ou vendas da doceria.",
+            409,
+          );
         const before = (
           await client.query(
             "SELECT * FROM entries WHERE id=$1 AND space_id=$2 AND deleted_at IS NULL FOR UPDATE",
@@ -1073,6 +1128,9 @@ export function createApp({
           "contacts",
           "entries",
           "audit",
+          "products",
+          "business_profiles",
+          "business_documents",
         ])
           data[table] = (
             await client.query(
@@ -1080,6 +1138,12 @@ export function createApp({
               [req.sid],
             )
           ).rows;
+        data.document_counters = (
+          await client.query(
+            "SELECT space_id,kind,last_value FROM document_counters WHERE space_id=$1 ORDER BY kind",
+            [req.sid],
+          )
+        ).rows;
         await client.query("COMMIT");
       } catch (err) {
         await client.query("ROLLBACK");

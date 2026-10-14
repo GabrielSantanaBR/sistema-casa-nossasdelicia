@@ -5,16 +5,18 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check database.js && node --check finance.js && node --check public/app.js",
+    "check": "node --check server.js && node --check database.js && node --check finance.js && node --check business.js && node --check document-pdf.js && node --check public/app.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
+    "pdfkit": "^0.17.2",
     "pg": "^8.13.1"
   },
   "devDependencies": {

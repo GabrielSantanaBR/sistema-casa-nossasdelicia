@@ -64,6 +64,13 @@ const state = {
   cards: [],
   categories: [],
   contacts: [],
+  products: [],
+  documents: [],
+  businessProfile: null,
+  documentSearch: "",
+  documentParty: "",
+  documentStatus: "all",
+  productKind: "all",
   audit: [],
   edit: null,
   mode: "entries",
@@ -107,6 +114,7 @@ function showLogin() {
   closeSecurity();
   Object.assign(state, {
     user: null,
+    view: "overview",
     space: null,
     spaces: [],
     edit: null,
@@ -122,6 +130,12 @@ function showLogin() {
     cards: [],
     categories: [],
     contacts: [],
+    products: [],
+    documents: [],
+    businessProfile: null,
+    documentSearch: "",
+    documentParty: "",
+    documentStatus: "all",
     audit: [],
   });
   $("#form-fields").replaceChildren();
@@ -198,6 +212,14 @@ $("#theme").onclick = () => {
 $("#nav").addEventListener("click", (e) => {
   const b = e.target.closest("[data-view]");
   if (b && !$("#content").hasAttribute("aria-busy")) {
+    if (
+      ["sales", "purchases"].includes(b.dataset.view) &&
+      state.view !== b.dataset.view
+    ) {
+      state.documentSearch = "";
+      state.documentParty = "";
+      state.documentStatus = "all";
+    }
     if (b.dataset.view === "bills") {
       state.kind = "all";
       state.status = "all";
@@ -215,10 +237,23 @@ $("#spaces").addEventListener("click", async (e) => {
     state.kind = "all";
     state.status = "all";
     state.order = "";
+    state.documentSearch = "";
+    state.documentParty = "";
+    state.documentStatus = "all";
     await load();
   }
 });
-$("#add").onclick = () => openForm("entries");
+$("#add").onclick = () =>
+  state.space.kind === "business" &&
+  ["overview", "sales", "purchases"].includes(state.view)
+    ? openForm(
+        "documents",
+        null,
+        state.view === "purchases" ? "purchase" : "sale",
+      )
+    : state.view === "products"
+      ? openForm("products")
+      : openForm("entries");
 $("#close-dialog").onclick = $("#cancel").onclick = () => $("#dialog").close();
 function period() {
   return {
@@ -234,6 +269,18 @@ function period() {
   };
 }
 let loadVersion = 0;
+async function allDocuments(base) {
+  const result = [];
+  for (let offset = 0; ; offset += 100) {
+    const rows = await api(
+      base +
+        "documents?" +
+        new URLSearchParams({ ...period(), limit: 100, offset }),
+    );
+    result.push(...rows);
+    if (rows.length < 100) return result;
+  }
+}
 async function allEntries(base, params = {}) {
   const result = [];
   for (let offset = 0; ; offset += 250) {
@@ -267,6 +314,9 @@ async function load() {
       categories,
       contacts,
       audit,
+      products,
+      documents,
+      businessProfile,
     ] = await Promise.all([
       api(base + "summary?" + new URLSearchParams(period())),
       allEntries(base, period()),
@@ -278,6 +328,15 @@ async function load() {
       api(base + "categories"),
       api(base + "contacts"),
       api(base + "audit"),
+      state.space.kind === "business"
+        ? api(base + "products")
+        : Promise.resolve([]),
+      state.space.kind === "business"
+        ? allDocuments(base)
+        : Promise.resolve([]),
+      state.space.kind === "business"
+        ? api(base + "business-profile")
+        : Promise.resolve(null),
     ]);
     if (version !== loadVersion) return;
     Object.assign(state, {
@@ -291,6 +350,9 @@ async function load() {
       categories,
       contacts,
       audit,
+      products,
+      documents,
+      businessProfile,
     });
     render();
   } catch (e) {
@@ -430,91 +492,92 @@ function overview() {
       )
       .slice(0, 4);
   return (
-    '<section class="balance-band" aria-label="Resumo do mês"><div class="balance-main"><small>Resultado previsto do mês</small><strong>' +
-    money(inc - exp) +
-    '</strong><span class="hint">Receitas menos despesas · inclui pendências</span></div><div class="income"><small>Receitas previstas</small><strong>' +
-    money(inc) +
-    '</strong><span class="hint">Entradas do período</span></div><div class="expense"><small>Despesas previstas</small><strong>' +
-    money(exp) +
-    '</strong><span class="hint">Saídas do período</span></div></section><div class="dashboard-grid"><section class="panel overview-table"><div class="section-head"><h3>Movimentações do mês</h3><button class="text-button" data-go="entries">Ver todas →</button></div>' +
-    (recent.length
-      ? table(
-          [
-            "Descrição",
-            '<span class="col-date">Vencimento</span>',
-            "Valor",
-            "Situação",
-            "",
-          ],
-          recent.map((t) => entryRow(t, true)),
-        )
-      : empty(
-          "O mês começa por aqui.",
-          "Registre uma receita ou despesa para acompanhar os números.",
-          "entries",
-          "Criar primeiro lançamento",
-        )) +
-    '</section><div class="panel-stack"><section class="panel"><div class="section-head"><h3>A pagar e receber</h3><button class="text-button" data-go="bills">Ver →</button></div><div class="attention"><div><span class="muted">Pendentes · todos os meses</span><div class="subtle">' +
-    s.overdue.count +
-    " atrasados em todo o histórico</div></div><strong>" +
-    pending.length +
-    "</strong></div>" +
-    (due.length
-      ? due
-          .map(
-            (x) =>
-              '<div class="due-item"><span class="date-tile">' +
-              localDate(x.due_date).slice(-2) +
-              "</span><div><b>" +
-              esc(x.description) +
-              '</b><div class="subtle">' +
-              (x.kind === "income" ? "A receber" : "A pagar") +
-              " · " +
-              displayDate(x.due_date) +
-              '</div></div><span class="amount">' +
-              money(x.amount) +
-              "</span></div>",
+    (state.space.kind === "business" ? businessOverview() : "") +
+    ('<section class="balance-band" aria-label="Resumo do mês"><div class="balance-main"><small>Resultado previsto do mês</small><strong>' +
+      money(inc - exp) +
+      '</strong><span class="hint">Receitas menos despesas · inclui pendências</span></div><div class="income"><small>Receitas previstas</small><strong>' +
+      money(inc) +
+      '</strong><span class="hint">Entradas do período</span></div><div class="expense"><small>Despesas previstas</small><strong>' +
+      money(exp) +
+      '</strong><span class="hint">Saídas do período</span></div></section><div class="dashboard-grid"><section class="panel overview-table"><div class="section-head"><h3>Movimentações do mês</h3><button class="text-button" data-go="entries">Ver todas →</button></div>' +
+      (recent.length
+        ? table(
+            [
+              "Descrição",
+              '<span class="col-date">Vencimento</span>',
+              "Valor",
+              "Situação",
+              "",
+            ],
+            recent.map((t) => entryRow(t, true)),
           )
-          .join("")
-      : '<p class="subtle">Nenhuma conta pendente.</p>') +
-    '</section><section class="panel"><h3>Para onde vai o dinheiro</h3>' +
-    (categories.length
-      ? categories
-          .map(
-            (x) =>
-              '<div class="category-item"><div class="listline"><span>' +
-              esc(x.label) +
-              "</span><b>" +
-              money(x.total) +
-              '</b></div><div class="bar"><span style="width:' +
-              Math.round((100 * Number(x.total)) / total) +
-              '%"></span></div></div>',
-          )
-          .join("")
-      : empty(
-          "Sem despesas por enquanto.",
-          "As categorias aparecem conforme você registra seus gastos.",
-        )) +
-    '</section></div></div><div class="dashboard-bottom"><section class="panel"><div class="section-head"><h3>Contas e caixas</h3><button class="text-button" data-go="accounts">Gerenciar →</button></div>' +
-    (s.accounts.length
-      ? s.accounts.map((x) => simpleLine(x.name, money(x.balance))).join("")
-      : empty(
-          "Onde você movimenta seu dinheiro?",
-          "Cadastre um banco ou caixa para acompanhar o saldo.",
-          "accounts",
-          "Adicionar conta",
-        )) +
-    '</section><section class="panel"><div class="section-head"><h3>Compras no cartão</h3><button class="text-button" data-go="cards">Gerenciar →</button></div>' +
-    (s.cards.length
-      ? s.cards.map((x) => simpleLine(x.name, money(x.purchases))).join("") +
-        '<p class="subtle">Compras lançadas neste mês. Não representa uma fatura automática.</p>'
-      : empty(
-          "Seus cartões, organizados.",
-          "Cadastre limite, fechamento e vencimento.",
-          "cards",
-          "Adicionar cartão",
-        )) +
-    "</section></div>"
+        : empty(
+            "O mês começa por aqui.",
+            "Registre uma receita ou despesa para acompanhar os números.",
+            "entries",
+            "Criar primeiro lançamento",
+          )) +
+      '</section><div class="panel-stack"><section class="panel"><div class="section-head"><h3>A pagar e receber</h3><button class="text-button" data-go="bills">Ver →</button></div><div class="attention"><div><span class="muted">Pendentes · todos os meses</span><div class="subtle">' +
+      s.overdue.count +
+      " atrasados em todo o histórico</div></div><strong>" +
+      pending.length +
+      "</strong></div>" +
+      (due.length
+        ? due
+            .map(
+              (x) =>
+                '<div class="due-item"><span class="date-tile">' +
+                localDate(x.due_date).slice(-2) +
+                "</span><div><b>" +
+                esc(x.description) +
+                '</b><div class="subtle">' +
+                (x.kind === "income" ? "A receber" : "A pagar") +
+                " · " +
+                displayDate(x.due_date) +
+                '</div></div><span class="amount">' +
+                money(x.amount) +
+                "</span></div>",
+            )
+            .join("")
+        : '<p class="subtle">Nenhuma conta pendente.</p>') +
+      '</section><section class="panel"><h3>Para onde vai o dinheiro</h3>' +
+      (categories.length
+        ? categories
+            .map(
+              (x) =>
+                '<div class="category-item"><div class="listline"><span>' +
+                esc(x.label) +
+                "</span><b>" +
+                money(x.total) +
+                '</b></div><div class="bar"><span style="width:' +
+                Math.round((100 * Number(x.total)) / total) +
+                '%"></span></div></div>',
+            )
+            .join("")
+        : empty(
+            "Sem despesas por enquanto.",
+            "As categorias aparecem conforme você registra seus gastos.",
+          )) +
+      '</section></div></div><div class="dashboard-bottom"><section class="panel"><div class="section-head"><h3>Contas e caixas</h3><button class="text-button" data-go="accounts">Gerenciar →</button></div>' +
+      (s.accounts.length
+        ? s.accounts.map((x) => simpleLine(x.name, money(x.balance))).join("")
+        : empty(
+            "Onde você movimenta seu dinheiro?",
+            "Cadastre um banco ou caixa para acompanhar o saldo.",
+            "accounts",
+            "Adicionar conta",
+          )) +
+      '</section><section class="panel"><div class="section-head"><h3>Compras no cartão</h3><button class="text-button" data-go="cards">Gerenciar →</button></div>' +
+      (s.cards.length
+        ? s.cards.map((x) => simpleLine(x.name, money(x.purchases))).join("") +
+          '<p class="subtle">Compras lançadas neste mês. Não representa uma fatura automática.</p>'
+        : empty(
+            "Seus cartões, organizados.",
+            "Cadastre limite, fechamento e vencimento.",
+            "cards",
+            "Adicionar cartão",
+          )) +
+      "</section></div>")
   );
 }
 function filteredEntries(bills = false) {
@@ -721,76 +784,78 @@ function reports() {
       state.summary.paidTotals?.find((x) => x.kind === "expense")?.total || 0,
     );
   return (
-    '<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-paid">Exportar pagamentos do mês</button><button id="backup">Baixar cópia de segurança</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">Previsões usam o vencimento; valores recebidos e liquidados usam a data do pagamento, mesmo quando o vencimento pertence a outro mês. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
-    section(
-      "Demonstrativo do período",
-      simpleLine("Receitas previstas", money(inc)) +
-        simpleLine("Despesas previstas", money(exp)) +
-        simpleLine(
-          "Resultado previsto",
-          "<strong>" + money(inc - exp) + "</strong>",
-        ) +
-        simpleLine("Receitas recebidas no mês", money(paidInc)) +
-        simpleLine("Despesas liquidadas no mês", money(paidExp)) +
-        simpleLine("Resultado liquidado", money(paidInc - paidExp)),
-    ) +
-    section(
-      "Pendências e exposição",
-      simpleLine(
-        "Despesas em aberto",
-        money(
-          state.entries
-            .filter((x) => x.kind === "expense" && !x.paid_date)
-            .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) / 100,
-        ),
+    (state.space.kind === "business" ? businessReport() : "") +
+    ('<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-paid">Exportar pagamentos do mês</button><button id="backup">Baixar cópia de segurança</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">Previsões usam o vencimento; valores recebidos e liquidados usam a data do pagamento, mesmo quando o vencimento pertence a outro mês. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
+      section(
+        "Demonstrativo do período",
+        simpleLine("Receitas previstas", money(inc)) +
+          simpleLine("Despesas previstas", money(exp)) +
+          simpleLine(
+            "Resultado previsto",
+            "<strong>" + money(inc - exp) + "</strong>",
+          ) +
+          simpleLine("Receitas recebidas no mês", money(paidInc)) +
+          simpleLine("Despesas liquidadas no mês", money(paidExp)) +
+          simpleLine("Resultado liquidado", money(paidInc - paidExp)),
       ) +
+      section(
+        "Pendências e exposição",
         simpleLine(
-          "Receitas a receber",
+          "Despesas em aberto",
           money(
             state.entries
-              .filter((x) => x.kind === "income" && !x.paid_date)
+              .filter((x) => x.kind === "expense" && !x.paid_date)
               .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) /
               100,
           ),
         ) +
-        simpleLine(
-          "Valores atrasados (histórico)",
-          money(state.summary.overdue.amount),
-        ),
-    ) +
-    "</div>" +
-    section(
-      "Lançamentos por vencimento",
-      table(
-        ["Descrição", "Vencimento", "Tipo", "Valor", "Situação", ""],
-        state.entries.map((t) => entryRow(t)),
-      ),
-    ) +
-    section(
-      "Pagamentos e recebimentos no mês",
-      state.paymentEntries.length
-        ? table(
-            ["Descrição", "Pagamento", "Vencimento", "Tipo", "Valor"],
-            state.paymentEntries.map(
-              (t) =>
-                "<tr><td>" +
-                esc(t.description) +
-                "</td><td>" +
-                displayDate(t.paid_date) +
-                "</td><td>" +
-                displayDate(t.due_date) +
-                "</td><td>" +
-                esc(kindNames[t.kind]) +
-                '</td><td class="amount">' +
-                money(t.amount) +
-                "</td></tr>",
+          simpleLine(
+            "Receitas a receber",
+            money(
+              state.entries
+                .filter((x) => x.kind === "income" && !x.paid_date)
+                .reduce((a, x) => a + Math.round(Number(x.amount) * 100), 0) /
+                100,
             ),
-          )
-        : empty(
-            "Nenhum pagamento registrado.",
-            "Informe a data de pagamento ao liquidar um lançamento.",
+          ) +
+          simpleLine(
+            "Valores atrasados (histórico)",
+            money(state.summary.overdue.amount),
           ),
-    )
+      ) +
+      "</div>" +
+      section(
+        "Lançamentos por vencimento",
+        table(
+          ["Descrição", "Vencimento", "Tipo", "Valor", "Situação", ""],
+          state.entries.map((t) => entryRow(t)),
+        ),
+      ) +
+      section(
+        "Pagamentos e recebimentos no mês",
+        state.paymentEntries.length
+          ? table(
+              ["Descrição", "Pagamento", "Vencimento", "Tipo", "Valor"],
+              state.paymentEntries.map(
+                (t) =>
+                  "<tr><td>" +
+                  esc(t.description) +
+                  "</td><td>" +
+                  displayDate(t.paid_date) +
+                  "</td><td>" +
+                  displayDate(t.due_date) +
+                  "</td><td>" +
+                  esc(kindNames[t.kind]) +
+                  '</td><td class="amount">' +
+                  money(t.amount) +
+                  "</td></tr>",
+              ),
+            )
+          : empty(
+              "Nenhum pagamento registrado.",
+              "Informe a data de pagamento ao liquidar um lançamento.",
+            ),
+      ))
   );
 }
 function trashView() {
@@ -970,6 +1035,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 function bindActions(root) {
+  if (state.space.kind === "business") bindBusinessActions(root);
   root.querySelectorAll("[data-restore]").forEach(
     (button) =>
       (button.onclick = async () => {
@@ -1010,6 +1076,7 @@ function bindActions(root) {
           ...state.pendingEntries,
           ...state.paymentEntries,
         ].find((r) => String(r.id) === x.dataset.settle);
+        if (r.document_id) return openLinkedDocument(r.document_id, true);
         openForm("entries", { ...r, paid_date: today() });
         $("#form [name=paid_date]").focus();
       }),
@@ -1031,15 +1098,15 @@ function bindActions(root) {
   );
   root.querySelectorAll("[data-edit]").forEach(
     (x) =>
-      (x.onclick = () =>
-        openForm(
-          "entries",
-          [
-            ...state.entries,
-            ...state.pendingEntries,
-            ...state.paymentEntries,
-          ].find((t) => String(t.id) === x.dataset.edit),
-        )),
+      (x.onclick = () => {
+        const row = [
+          ...state.entries,
+          ...state.pendingEntries,
+          ...state.paymentEntries,
+        ].find((t) => String(t.id) === x.dataset.edit);
+        if (row.document_id) return openLinkedDocument(row.document_id);
+        openForm("entries", row);
+      }),
   );
   root
     .querySelectorAll("[data-delete]")
@@ -1063,6 +1130,22 @@ function render() {
   if (!state.space || !state.summary) return;
   closeNav();
   document.body.classList.toggle("business", state.space.kind === "business");
+  document
+    .querySelectorAll(".business-only")
+    .forEach((b) =>
+      b.classList.toggle("hidden", state.space.kind !== "business"),
+    );
+  $("#contacts-label").textContent =
+    state.space.kind === "business" ? "Cafeterias e fornecedores" : "Contatos";
+  $("#add").textContent =
+    state.space.kind === "business" &&
+    ["overview", "sales", "purchases"].includes(state.view)
+      ? state.view === "purchases"
+        ? "+ Registrar compra"
+        : "+ Nova venda"
+      : state.view === "products"
+        ? "+ Cadastrar item"
+        : "+ Novo lançamento";
   const labels = {
       overview: "Visão geral",
       entries: "Lançamentos",
@@ -1074,6 +1157,10 @@ function render() {
       reports: "Prestação de contas",
       audit: "Histórico de ações",
       trash: "Lixeira",
+      sales: "Vendas e comprovantes",
+      purchases: "Compras de materiais",
+      products: "Doces e materiais",
+      "business-profile": "Dados da doceria",
     },
     descriptions = {
       overview: "Um olhar sobre as contas, os gastos e o que vem pela frente.",
@@ -1086,6 +1173,12 @@ function render() {
       reports: "Confira os números e compartilhe o demonstrativo.",
       trash: "Recupere lançamentos removidos sem perder o histórico.",
       audit: "Consulte os registros de alterações neste ambiente.",
+      sales:
+        "Doces, cafeterias e receitas, com um comprovante para cada venda.",
+      purchases: "O que foi comprado, onde, quando e quanto custou.",
+      products: "Cadastre doces para vender e materiais para comprar.",
+      "business-profile":
+        "Identificação que aparece nos novos comprovantes em PDF.",
     };
   $("#heading").textContent = labels[state.view];
   $("#view-description").textContent = descriptions[state.view];
@@ -1111,66 +1204,79 @@ function render() {
   });
   const selected = state.view;
   const main =
-    selected === "overview"
-      ? overview()
-      : selected === "entries"
-        ? entriesView()
-        : selected === "bills"
-          ? entriesView(true)
-          : ["accounts", "cards", "categories", "contacts"].includes(selected)
-            ? assets(selected)
-            : selected === "trash"
-              ? trashView()
-              : selected === "reports"
-                ? reports()
-                : section(
-                    "Atividade recente",
-                    state.audit.length
-                      ? table(
-                          [
-                            "Ação",
-                            "Registro",
-                            "Detalhes",
-                            "Responsável",
-                            "Data",
-                          ],
-                          state.audit.map(
-                            (x) =>
-                              "<tr><td>" +
-                              esc(
-                                {
-                                  create: "Criação",
-                                  update: "Edição",
-                                  delete: "Exclusão",
-                                  restore: "Restauração",
-                                }[x.action] || x.action,
-                              ) +
-                              "</td><td>" +
-                              esc(
-                                {
-                                  entries: "Lançamento",
-                                  accounts: "Conta",
-                                  cards: "Cartão",
-                                  categories: "Categoria",
-                                  contacts: "Contato",
-                                }[x.entity] || x.entity,
-                              ) +
-                              " #" +
-                              x.entity_id +
-                              "</td><td>" +
-                              auditDetails(x) +
-                              "</td><td>" +
-                              esc(x.actor || "Registro anterior") +
-                              "</td><td>" +
-                              new Date(x.at).toLocaleString("pt-BR") +
-                              "</td></tr>",
-                          ),
-                        )
-                      : empty(
-                          "Nenhuma alteração registrada.",
-                          "As ações realizadas neste ambiente aparecerão aqui.",
-                        ),
-                  );
+    selected === "sales"
+      ? businessView("sale")
+      : selected === "purchases"
+        ? businessView("purchase")
+        : selected === "products"
+          ? productView()
+          : selected === "business-profile"
+            ? profileView()
+            : selected === "overview"
+              ? overview()
+              : selected === "entries"
+                ? entriesView()
+                : selected === "bills"
+                  ? entriesView(true)
+                  : ["accounts", "cards", "categories", "contacts"].includes(
+                        selected,
+                      )
+                    ? assets(selected)
+                    : selected === "trash"
+                      ? trashView()
+                      : selected === "reports"
+                        ? reports()
+                        : section(
+                            "Atividade recente",
+                            state.audit.length
+                              ? table(
+                                  [
+                                    "Ação",
+                                    "Registro",
+                                    "Detalhes",
+                                    "Responsável",
+                                    "Data",
+                                  ],
+                                  state.audit.map(
+                                    (x) =>
+                                      "<tr><td>" +
+                                      esc(
+                                        {
+                                          create: "Criação",
+                                          update: "Edição",
+                                          delete: "Exclusão",
+                                          restore: "Restauração",
+                                        }[x.action] || x.action,
+                                      ) +
+                                      "</td><td>" +
+                                      esc(
+                                        {
+                                          entries: "Lançamento",
+                                          accounts: "Conta",
+                                          cards: "Cartão",
+                                          categories: "Categoria",
+                                          contacts: "Contato",
+                                          products: "Doce / material",
+                                          business_documents: "Compra / venda",
+                                          business_profiles: "Dados da doceria",
+                                        }[x.entity] || x.entity,
+                                      ) +
+                                      " #" +
+                                      x.entity_id +
+                                      "</td><td>" +
+                                      auditDetails(x) +
+                                      "</td><td>" +
+                                      esc(x.actor || "Registro anterior") +
+                                      "</td><td>" +
+                                      new Date(x.at).toLocaleString("pt-BR") +
+                                      "</td></tr>",
+                                  ),
+                                )
+                              : empty(
+                                  "Nenhuma alteração registrada.",
+                                  "As ações realizadas neste ambiente aparecerão aqui.",
+                                ),
+                          );
   $("#content").innerHTML =
     '<div class="period-bar"><span>Resumo mensal</span><div class="month-control"><button id="prev-month" aria-label="Mês anterior">‹</button><label for="month">Mês de referência</label><input type="month" id="month" value="' +
     state.month +
@@ -1339,7 +1445,7 @@ function linked(label, name, type, value) {
     "</select></label>"
   );
 }
-function openForm(type, record = null) {
+function openForm(type, record = null, documentKind = "sale") {
   state.formSpace = state.space.id;
   state.writeKey = crypto.randomUUID();
   state.lastWritePayload = null;
@@ -1354,9 +1460,110 @@ function openForm(type, record = null) {
       cards: "cartão",
       categories: "categoria",
       contacts: "contato",
+      products: "item",
+      documents:
+        record?.kind === "purchase" || documentKind === "purchase"
+          ? "compra"
+          : "venda",
+      "business-profile": "dados da doceria",
+      "document-payment": "pagamento / recebimento",
     }[type];
   $("#form-error").textContent = "";
   let html = "";
+  if (type === "documents")
+    html = documentFormHTML(record?.kind || documentKind, record || {});
+  if (type === "document-payment") {
+    $("#modal-title").textContent =
+      record.kind === "sale" ? "Registrar recebimento" : "Registrar pagamento";
+    html =
+      '<p class="wide">' +
+      esc(record.code) +
+      " · " +
+      esc(record.party_snapshot.name) +
+      " · " +
+      money(record.amount) +
+      "</p>" +
+      field(
+        "Data do pagamento (vazio = reabrir pendência)",
+        "paid_date",
+        "date",
+        localDate(record.paid_date) || today(),
+        true,
+        `max="${today()}"`,
+      ) +
+      (record.card_id
+        ? '<p class="subtle wide">Compra vinculada ao cartão. O pagamento não gera uma segunda despesa.</p>'
+        : linked(
+            record.kind === "sale"
+              ? "Conta que recebeu o valor"
+              : "Conta de pagamento",
+            "account_id",
+            "accounts",
+            record.account_id,
+          ));
+  }
+  if (type === "business-profile")
+    html =
+      field(
+        "Nome da doceria *",
+        "name",
+        "text",
+        record.name,
+        true,
+        'required maxlength="150"',
+      ) +
+      field(
+        "CPF/CNPJ",
+        "document",
+        "text",
+        record.document,
+        false,
+        'maxlength="50"',
+      ) +
+      field(
+        "Telefone",
+        "phone",
+        "text",
+        record.phone,
+        false,
+        'maxlength="50"',
+      ) +
+      field(
+        "Endereço",
+        "address",
+        "text",
+        record.address,
+        true,
+        'maxlength="300"',
+      );
+  if (type === "products")
+    html =
+      field(
+        "Nome do doce / material *",
+        "name",
+        "text",
+        record?.name || "",
+        true,
+        'required maxlength="150"',
+      ) +
+      select(
+        "Tipo",
+        "kind",
+        [
+          ["product", "Doce vendido"],
+          ["material", "Material comprado"],
+        ],
+        record?.kind || "product",
+      ) +
+      select("Unidade", "unit", businessUnits, record?.unit || "un") +
+      field(
+        "Preço padrão (R$)",
+        "default_price",
+        "number",
+        record?.default_price || "0",
+        false,
+        'min="0" step="0.01" max="999999999999.99"',
+      );
   if (type === "entries") {
     const d = record || {};
     html =
@@ -1544,13 +1751,36 @@ function openForm(type, record = null) {
         "kind",
         [
           ["supplier", "Fornecedor"],
-          ["customer", "Cliente"],
+          [
+            "customer",
+            state.space.kind === "business" ? "Cafeteria / cliente" : "Cliente",
+          ],
           ["other", "Outro"],
         ],
-        record?.kind || "other",
+        record?.kind ||
+          (state.space.kind === "business" ? "customer" : "other"),
+      ) +
+      field(
+        "CPF/CNPJ (opcional)",
+        "document",
+        "text",
+        record?.document || "",
+        false,
+        'maxlength="50"',
+      ) +
+      field(
+        "Endereço (opcional)",
+        "address",
+        "text",
+        record?.address || "",
+        false,
+        'maxlength="300"',
       ) +
       field("Observações", "notes", "textarea", record?.notes || "", true);
   $("#form-fields").innerHTML = html;
+  $("#dialog").classList.toggle("document-dialog", type === "documents");
+  if (type === "documents")
+    setupDocumentForm(record?.kind || documentKind, record || {});
   if (type === "entries") {
     const kind = $("#form [name=kind]"),
       account = $("#form [name=account_id]"),
@@ -1604,7 +1834,10 @@ $("#form").addEventListener("submit", async (e) => {
   const button = e.target.querySelector("[type=submit]");
   if (button.disabled) return;
   button.disabled = true;
-  const values = Object.fromEntries(new FormData(e.target));
+  const values =
+    state.mode === "documents"
+      ? documentFormValues(e.target)
+      : Object.fromEntries(new FormData(e.target));
   for (const f of [
     "account_id",
     "to_account_id",
@@ -1628,11 +1861,21 @@ $("#form").addEventListener("submit", async (e) => {
       "/api/s/" +
       state.formSpace +
       "/" +
-      state.mode +
-      (state.edit ? "/" + state.edit.id : "");
+      (state.mode === "document-payment"
+        ? "documents/" + state.edit.id + "/payment"
+        : state.mode) +
+      (state.edit &&
+      !["business-profile", "document-payment"].includes(state.mode)
+        ? "/" + state.edit.id
+        : "");
     const result = await api(path, {
       writeKey: state.writeKey,
-      method: state.edit ? "PUT" : "POST",
+      method:
+        state.mode === "document-payment"
+          ? "POST"
+          : state.edit
+            ? "PUT"
+            : "POST",
       body: payload,
     });
     $("#dialog").close();
@@ -1741,4 +1984,576 @@ window.addEventListener("pageshow", (e) => {
     boot();
   }
 });
+const businessUnits = [
+  ["un", "Unidade"],
+  ["kg", "Quilo"],
+  ["g", "Grama"],
+  ["l", "Litro"],
+  ["ml", "Mililitro"],
+  ["pacote", "Pacote"],
+  ["caixa", "Caixa"],
+];
+const docTotal = (rows) =>
+  rows.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0) / 100;
+function businessOverview() {
+  const sales = state.documents.filter((r) => r.kind === "sale"),
+    purchases = state.documents.filter((r) => r.kind === "purchase");
+  return (
+    '<section class="business-intro"><div><span class="eyebrow">ROTINA DA DOCERIA</span><h3>Da compra do ingrediente à entrega na cafeteria.</h3><p>Registre os itens uma vez. Receitas, despesas e comprovantes ficam conectados.</p></div><div class="button-row"><button class="primary" data-new-document="sale">+ Nova venda</button><button data-new-document="purchase">+ Registrar compra</button></div></section><div class="business-metrics">' +
+    [
+      [
+        "Vendas realizadas",
+        money(docTotal(sales)),
+        `${sales.length} comprovantes no mês`,
+      ],
+      [
+        "Materiais comprados",
+        money(docTotal(purchases)),
+        `${purchases.length} compras no mês`,
+      ],
+      [
+        "Vendas a receber",
+        money(docTotal(sales.filter((r) => !r.paid_date))),
+        "Vendas deste mês em aberto",
+      ],
+    ]
+      .map(
+        ([label, value, hint]) =>
+          `<div><small>${label}</small><strong>${value}</strong><span class="subtle">${hint}</span></div>`,
+      )
+      .join("") +
+    "</div>"
+  );
+}
+function documentStatus(d) {
+  return d.paid_date
+    ? `<span class="tag good">${d.kind === "sale" ? "Recebido" : "Pago"}</span>`
+    : `<span class="tag ${localDate(d.due_date) < today() ? "warn" : ""}">${localDate(d.due_date) < today() ? "Atrasado" : d.kind === "sale" ? "A receber" : "A pagar"}</span>`;
+}
+function documentItemsTable(items) {
+  return table(
+    ["Item", "Quantidade", "Preço unitário", "Total"],
+    items.map(
+      (i) =>
+        `<tr><td>${esc(i.name)}</td><td>${Number(i.quantity).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${esc(i.unit)}</td><td class="amount">${money(i.unit_price)}</td><td class="amount">${money(i.total)}</td></tr>`,
+    ),
+  );
+}
+function businessView(kind) {
+  const rows = state.documents
+    .filter((r) => r.kind === kind)
+    .filter((r) => {
+      const text = [
+        r.code,
+        r.party_snapshot.name,
+        r.reference,
+        ...r.items.map((i) => i.name),
+      ]
+        .join(" ")
+        .toLocaleLowerCase("pt-BR");
+      return (
+        text.includes(
+          (state.documentSearch || "").toLocaleLowerCase("pt-BR"),
+        ) &&
+        (!state.documentParty || String(r.party_id) === state.documentParty) &&
+        (state.documentStatus === "all" ||
+          (state.documentStatus === "paid"
+            ? !!r.paid_date
+            : state.documentStatus === "overdue"
+              ? !r.paid_date && localDate(r.due_date) < today()
+              : !r.paid_date))
+      );
+    });
+  const parties = state.contacts.filter(
+    (p) => p.kind === (kind === "sale" ? "customer" : "supplier"),
+  );
+  const tools =
+    '<div class="toolbar document-toolbar"><div class="filters"><input type="search" id="document-search" aria-label="Buscar documentos" placeholder="Buscar cafeteria, item ou número" value="' +
+    esc(state.documentSearch || "") +
+    '"><select id="document-party" aria-label="Filtrar cafeteria ou fornecedor"><option value="">' +
+    (kind === "sale" ? "Todas as cafeterias" : "Todos os fornecedores") +
+    "</option>" +
+    parties
+      .map(
+        (p) =>
+          `<option value="${p.id}" ${state.documentParty === String(p.id) ? "selected" : ""}>${esc(p.name)}</option>`,
+      )
+      .join("") +
+    '</select><select id="document-status" aria-label="Filtrar pagamento">' +
+    [
+      ["all", "Todas as situações"],
+      ["pending", kind === "sale" ? "A receber" : "A pagar"],
+      ["paid", kind === "sale" ? "Recebidas" : "Pagas"],
+      ["overdue", "Atrasadas"],
+    ]
+      .map(
+        ([v, l]) =>
+          `<option value="${v}" ${state.documentStatus === v ? "selected" : ""}>${l}</option>`,
+      )
+      .join("") +
+    '</select></div><button class="primary" data-new-document="' +
+    kind +
+    '">+ ' +
+    (kind === "sale" ? "Nova venda" : "Registrar compra") +
+    "</button></div>";
+  return (
+    tools +
+    '<div class="document-summary"><span>' +
+    rows.length +
+    " " +
+    (kind === "sale" ? "vendas" : "compras") +
+    " no filtro</span><strong>" +
+    money(docTotal(rows)) +
+    "</strong><span>" +
+    money(docTotal(rows.filter((r) => !r.paid_date))) +
+    " em aberto</span></div>" +
+    (kind === "sale"
+      ? '<p class="subtle document-note">PDF de controle comercial, não fiscal. Marcar como recebida atualiza o caixa; salvar a venda já registra a receita.</p>'
+      : '<p class="subtle document-note">Cada compra registra uma despesa com fornecedor, data, quantidades e preços. Não lance a mesma compra novamente em Lançamentos.</p>') +
+    (rows.length
+      ? '<section class="document-list">' +
+        rows
+          .map(
+            (d) =>
+              `<article class="document-row"><div class="document-top"><div><span class="eyebrow">${esc(d.code)} · ${displayDate(d.issued_date)}</span><h3>${esc(d.party_snapshot.name)}</h3><p class="subtle">${d.items.length} ${d.items.length === 1 ? "item" : "itens"} · vencimento ${displayDate(d.due_date)}${d.reference ? " · " + esc(d.reference) : ""}</p></div><div class="document-value"><strong>${money(d.amount)}</strong>${documentStatus(d)}</div></div><details><summary>Ver itens e observações</summary>${documentItemsTable(d.items)}${d.notes ? '<p class="document-notes">' + esc(d.notes) + "</p>" : ""}</details><div class="document-actions"><button data-document-payment="${d.id}">${d.paid_date ? (kind === "sale" ? "Alterar recebimento" : "Alterar pagamento") : kind === "sale" ? "Registrar recebimento" : "Registrar pagamento"}</button><a class="button-link" href="${endpoint("documents/" + d.id + "/pdf")}">Baixar PDF</a><button data-document-edit="${d.id}">Editar</button><button data-document-delete="${d.id}" class="subtle">Mover para lixeira</button></div></article>`,
+          )
+          .join("") +
+        "</section>"
+      : empty(
+          kind === "sale"
+            ? "Nenhuma venda neste período."
+            : "Nenhuma compra neste período.",
+          "Escolha outro mês ou registre os itens usando o botão acima.",
+        ))
+  );
+}
+function productView() {
+  const products = state.products.filter(
+    (p) => state.productKind === "all" || p.kind === state.productKind,
+  );
+  return (
+    '<div class="toolbar"><div class="filters"><select id="product-kind" aria-label="Tipo de item">' +
+    [
+      ["all", "Doces e materiais"],
+      ["product", "Doces vendidos"],
+      ["material", "Materiais comprados"],
+    ]
+      .map(
+        ([v, l]) =>
+          `<option value="${v}" ${state.productKind === v ? "selected" : ""}>${l}</option>`,
+      )
+      .join("") +
+    '</select></div><button class="primary" data-create="products">+ Cadastrar item</button></div>' +
+    section(
+      "Catálogo da doceria",
+      products.length
+        ? table(
+            ["Item", "Tipo", "Unidade", "Preço padrão", ""],
+            products.map(
+              (p) =>
+                `<tr><td><b>${esc(p.name)}</b></td><td>${p.kind === "product" ? "Doce" : "Material"}</td><td>${esc(p.unit)}</td><td class="amount">${money(p.default_price)}</td><td><div class="actions"><button data-edit-asset="products:${p.id}">Editar</button><button data-remove="products:${p.id}">Excluir</button></div></td></tr>`,
+            ),
+          )
+        : empty(
+            "Cadastre seus doces e materiais.",
+            "O preço padrão preenche a venda ou compra, e pode ser ajustado em cada documento.",
+            "products",
+            "Cadastrar primeiro item",
+          ),
+    )
+  );
+}
+function businessReport() {
+  const sales = state.documents.filter((d) => d.kind === "sale");
+  const purchases = state.documents.filter((d) => d.kind === "purchase");
+  const group = (rows, items = false) => {
+    const result = new Map();
+    for (const d of rows)
+      for (const i of items ? d.items : [null]) {
+        const key = items ? i.name + "|" + i.unit : String(d.party_id),
+          label = items ? i.name : d.party_snapshot.name;
+        const r = result.get(key) || {
+          label,
+          unit: i?.unit,
+          total: 0,
+          quantity: 0,
+          pending: 0,
+        };
+        r.total += Math.round(Number(i?.total || d.amount) * 100);
+        r.quantity += Number(i?.quantity || 1);
+        if (!d.paid_date)
+          r.pending += Math.round(Number(i?.total || d.amount) * 100);
+        result.set(key, r);
+      }
+    return [...result.values()].sort((a, b) => b.total - a.total);
+  };
+  const partyRows = group(sales),
+    sweetRows = group(sales, true),
+    materialRows = group(purchases, true);
+  return (
+    '<section class="panel business-report"><div class="section-head"><div><span class="eyebrow">POR DATA DA VENDA / COMPRA</span><h3>Prestação de contas da doceria</h3></div><button id="documents-csv">Exportar itens (CSV)</button></div><p class="subtle">As tabelas abaixo detalham somente compras e vendas cadastradas com itens no mês selecionado. O demonstrativo financeiro reúne também as outras receitas e despesas.</p><div class="business-metrics"><div><small>Vendas do mês</small><strong>' +
+    money(docTotal(sales)) +
+    "</strong></div><div><small>Compras de materiais</small><strong>" +
+    money(docTotal(purchases)) +
+    "</strong></div><div><small>Vendas em aberto</small><strong>" +
+    money(docTotal(sales.filter((d) => !d.paid_date))) +
+    "</strong></div></div>" +
+    section(
+      "Vendas por cafeteria",
+      partyRows.length
+        ? table(
+            ["Cafeteria", "Vendas", "Valor", "A receber"],
+            partyRows.map(
+              (r) =>
+                `<tr><td>${esc(r.label)}</td><td>${r.quantity}</td><td class="amount">${money(r.total / 100)}</td><td class="amount">${money(r.pending / 100)}</td></tr>`,
+            ),
+          )
+        : empty(
+            "Sem vendas no mês.",
+            "Cadastre uma venda para acompanhar as cafeterias.",
+          ),
+    ) +
+    section(
+      "Doces vendidos",
+      sweetRows.length
+        ? table(
+            ["Doce", "Quantidade", "Total vendido"],
+            sweetRows.map(
+              (r) =>
+                `<tr><td>${esc(r.label)}</td><td>${r.quantity.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${esc(r.unit)}</td><td class="amount">${money(r.total / 100)}</td></tr>`,
+            ),
+          )
+        : empty("Sem itens vendidos.", "Os doces das vendas aparecerão aqui."),
+    ) +
+    section(
+      "Materiais comprados",
+      materialRows.length
+        ? table(
+            ["Material", "Quantidade", "Total gasto"],
+            materialRows.map(
+              (r) =>
+                `<tr><td>${esc(r.label)}</td><td>${r.quantity.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${esc(r.unit)}</td><td class="amount">${money(r.total / 100)}</td></tr>`,
+            ),
+          )
+        : empty(
+            "Sem materiais comprados.",
+            "Os itens das compras aparecerão aqui.",
+          ),
+    ) +
+    "</section>"
+  );
+}
+function profileView() {
+  const p = state.businessProfile;
+  return section(
+    "Dados nos novos comprovantes",
+    '<p class="subtle">Preencha os dados reais da doceria para identificar os PDFs. Documentos já salvos mantêm os dados da emissão.</p>' +
+      simpleLine("Nome", esc(p.name)) +
+      simpleLine("CPF/CNPJ", esc(p.document || "Não informado")) +
+      simpleLine("Endereço", esc(p.address || "Não informado")) +
+      simpleLine("Telefone", esc(p.phone || "Não informado")) +
+      '<div class="button-row"><button data-edit-profile>Editar dados da doceria</button></div>',
+  );
+}
+function documentFormHTML(kind, d = {}) {
+  const parties = state.contacts.filter(
+    (p) => p.kind === (kind === "sale" ? "customer" : "supplier"),
+  );
+  const products = state.products.filter(
+    (p) => p.kind === (kind === "sale" ? "product" : "material"),
+  );
+  return (
+    (!parties.length || !products.length
+      ? '<div class="guide wide">Antes de registrar, cadastre ' +
+        (!parties.length
+          ? kind === "sale"
+            ? "a cafeteria em Cafeterias e fornecedores"
+            : "o local da compra em Cafeterias e fornecedores"
+          : "") +
+        (!parties.length && !products.length ? " e " : "") +
+        (!products.length
+          ? (kind === "sale" ? "os doces" : "os materiais") +
+            " em Doces e materiais"
+          : "") +
+        ".</div>"
+      : "") +
+    '<input type="hidden" name="kind" value="' +
+    kind +
+    '">' +
+    select(
+      kind === "sale"
+        ? "Cafeteria / cliente *"
+        : "Fornecedor / local da compra *",
+      "party_id",
+      [["", "Selecione"], ...parties.map((p) => [p.id, p.name])],
+      d.party_id,
+    ) +
+    field(
+      "Data da " + (kind === "sale" ? "venda" : "compra") + " *",
+      "issued_date",
+      "date",
+      localDate(d.issued_date) || today(),
+      false,
+      `required max="${today()}"`,
+    ) +
+    field(
+      "Vencimento *",
+      "due_date",
+      "date",
+      localDate(d.due_date) || today(),
+      false,
+      "required",
+    ) +
+    field(
+      kind === "sale"
+        ? "Recebida em (vazio = a receber)"
+        : "Paga em (vazio = a pagar)",
+      "paid_date",
+      "date",
+      localDate(d.paid_date),
+      false,
+      `max="${today()}"`,
+    ) +
+    linked(
+      kind === "sale" ? "Conta de recebimento" : "Conta de pagamento",
+      "account_id",
+      "accounts",
+      d.account_id,
+    ) +
+    (kind === "purchase"
+      ? linked("Cartão (opcional)", "card_id", "cards", d.card_id)
+      : "") +
+    select(
+      "Categoria",
+      "category_id",
+      [
+        ["", "Categoria padrão"],
+        ...state.categories
+          .filter((c) => c.kind === (kind === "sale" ? "income" : "expense"))
+          .map((c) => [c.id, c.name]),
+      ],
+      d.category_id,
+    ) +
+    field(
+      "Referência (pedido / nota do fornecedor)",
+      "reference",
+      "text",
+      d.reference || "",
+      false,
+      'maxlength="150"',
+    ) +
+    '<section class="line-editor wide"><div class="section-head"><h3>' +
+    (kind === "sale" ? "Doces vendidos" : "Materiais comprados") +
+    '</h3><button type="button" id="add-document-item">+ Adicionar item</button></div><div id="document-items"></div><div class="document-total"><span>Total calculado</span><strong id="document-total">R$ 0,00</strong></div><p class="subtle">' +
+    (kind === "sale"
+      ? "Ao salvar, o total será registrado uma única vez como receita."
+      : "Ao salvar, o total será registrado uma única vez como despesa.") +
+    "</p></section>" +
+    field("Observações", "notes", "textarea", d.notes || "", true)
+  );
+}
+function setupDocumentForm(kind, record = {}) {
+  const root = $("#document-items");
+  const update = () => {
+    let total = 0n,
+      invalid = false;
+    for (const line of root.children) {
+      const q = line.querySelector("[data-quantity]").value,
+        p = line.querySelector("[data-unit-price]").value;
+      let cents = 0n;
+      if (/^\d{1,9}(\.\d{1,3})?$/.test(q) && /^\d{1,12}(\.\d{1,2})?$/.test(p)) {
+        const [a, b = ""] = q.split("."),
+          [c, d = ""] = p.split(".");
+        cents =
+          ((BigInt(a) * 1000n + BigInt(b.padEnd(3, "0"))) *
+            (BigInt(c) * 100n + BigInt(d.padEnd(2, "0"))) +
+            500n) /
+          1000n;
+      } else invalid = true;
+      total += cents;
+      line.querySelector("[data-line-total]").textContent = money(
+        Number(cents) / 100,
+      );
+    }
+    $("#document-total").textContent = invalid
+      ? "Preencha quantidades e preços"
+      : money(Number(total) / 100);
+  };
+  const add = (item = {}) => {
+    if (root.children.length >= 100)
+      return notify("Limite de 100 itens por documento.");
+    const options = state.products.filter(
+      (p) => p.kind === (kind === "sale" ? "product" : "material"),
+    );
+    if (
+      item.product_id &&
+      !options.some((p) => String(p.id) === String(item.product_id))
+    )
+      options.push({
+        id: item.product_id,
+        name: item.name,
+        unit: item.unit,
+        default_price: item.unit_price,
+      });
+    const node = el("div", { class: "document-item" });
+    node.innerHTML =
+      '<label>Item *<select data-product required><option value="">Selecione</option>' +
+      options
+        .map(
+          (p) =>
+            `<option value="${p.id}" ${String(p.id) === String(item.product_id) ? "selected" : ""}>${esc(p.name)}</option>`,
+        )
+        .join("") +
+      '</select></label><label>Quantidade *<input data-quantity type="number" step="0.001" min="0.001" max="999999999.999" required value="' +
+      esc(item.quantity || "1") +
+      '"></label><span data-line-unit class="line-unit">' +
+      esc(item.unit || "") +
+      '</span><label>Preço unitário (R$) *<input data-unit-price type="number" step="0.01" min="0.01" max="999999999999.99" required value="' +
+      esc(item.unit_price || "") +
+      '"></label><div class="line-subtotal"><small>Subtotal</small><strong data-line-total></strong></div><button type="button" class="remove-line" aria-label="Remover item">×</button>';
+    const sel = node.querySelector("[data-product]"),
+      qty = node.querySelector("[data-quantity]");
+    const unit = () => {
+      const p = options.find((p) => String(p.id) === sel.value);
+      node.querySelector("[data-line-unit]").textContent = p?.unit || "";
+      qty.step = p?.unit === "un" ? "1" : "0.001";
+      qty.min = p?.unit === "un" ? "1" : "0.001";
+    };
+    sel.onchange = () => {
+      const p = options.find((p) => String(p.id) === sel.value);
+      node.querySelector("[data-unit-price]").value =
+        Number(p?.default_price) > 0 ? p.default_price : "";
+      unit();
+      update();
+    };
+    node.querySelector(".remove-line").onclick = () => {
+      node.remove();
+      if (!root.children.length) add();
+      update();
+    };
+    node.oninput = update;
+    root.append(node);
+    unit();
+    update();
+    return node;
+  };
+  for (const item of record.items?.length ? record.items : [{}]) add(item);
+  $("#add-document-item").onclick = () =>
+    add()?.querySelector("select").focus();
+  $("#form [name=party_id]").required = true;
+  const account = $("#form [name=account_id]"),
+    card = $("#form [name=card_id]");
+  if (card) {
+    account.onchange = () => {
+      if (account.value) card.value = "";
+    };
+    card.onchange = () => {
+      if (card.value) account.value = "";
+    };
+  }
+}
+function documentFormValues(form) {
+  const f = new FormData(form),
+    body = {};
+  for (const key of [
+    "kind",
+    "party_id",
+    "issued_date",
+    "due_date",
+    "paid_date",
+    "account_id",
+    "card_id",
+    "category_id",
+    "reference",
+    "notes",
+  ])
+    body[key] = f.get(key) || null;
+  body.items = [...$("#document-items").children].map((n) => ({
+    product_id: n.querySelector("[data-product]").value,
+    quantity: n.querySelector("[data-quantity]").value,
+    unit_price: n.querySelector("[data-unit-price]").value,
+  }));
+  return body;
+}
+async function openLinkedDocument(id, payment = false) {
+  const space = state.space.id;
+  try {
+    const d = await api(endpoint("documents/" + id));
+    if (!state.space || state.space.id !== space) return;
+    openForm(payment ? "document-payment" : "documents", d);
+  } catch (err) {
+    notify(err.message);
+  }
+}
+function bindBusinessActions(root) {
+  root
+    .querySelectorAll("[data-new-document]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => openForm("documents", null, b.dataset.newDocument)),
+    );
+  root
+    .querySelectorAll("[data-document-edit]")
+    .forEach(
+      (b) => (b.onclick = () => openLinkedDocument(b.dataset.documentEdit)),
+    );
+  root
+    .querySelectorAll("[data-document-payment]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => openLinkedDocument(b.dataset.documentPayment, true)),
+    );
+  root.querySelectorAll("[data-document-delete]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        const d = state.documents.find(
+          (d) => String(d.id) === b.dataset.documentDelete,
+        );
+        if (
+          !confirm(
+            "Mover este documento e o lançamento financeiro para a lixeira?",
+          )
+        )
+          return;
+        b.disabled = true;
+        try {
+          await api(endpoint("entries/" + d.entry_id), {
+            method: "DELETE",
+            body: JSON.stringify({ version: d.version }),
+          });
+          notify("Documento movido para a lixeira");
+          await load();
+        } catch (err) {
+          notify(err.message);
+          b.disabled = false;
+        }
+      }),
+  );
+  root
+    .querySelector("[data-edit-profile]")
+    ?.addEventListener("click", () =>
+      openForm("business-profile", state.businessProfile),
+    );
+  const focusRender = (id, key, event) => {
+    const input = root.querySelector("#" + id);
+    if (input)
+      input.addEventListener(event, () => {
+        const pos = input.selectionStart;
+        state[key] = input.value;
+        render();
+        const next = $("#" + id);
+        next.focus();
+        if (event === "input") next.setSelectionRange(pos, pos);
+      });
+  };
+  focusRender("document-search", "documentSearch", "input");
+  focusRender("document-party", "documentParty", "change");
+  focusRender("document-status", "documentStatus", "change");
+  focusRender("product-kind", "productKind", "change");
+  $("#documents-csv")?.addEventListener("click", () => {
+    location.href =
+      endpoint("documents.csv") + "?" + new URLSearchParams(period());
+  });
+}
+
 boot();

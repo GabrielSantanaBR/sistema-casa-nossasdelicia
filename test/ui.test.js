@@ -84,6 +84,16 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
       { id: "1", version: 1, name: "Pessoa", kind: "other", notes: "Nota" },
     ],
     audit: [],
+    products: [],
+    documents: [],
+    "business-profile": {
+      id: "1",
+      version: 1,
+      name: "Nossas Delícias",
+      document: "",
+      address: "",
+      phone: "",
+    },
     sessions: [
       {
         id: "test-id",
@@ -277,6 +287,7 @@ test("interface: navegação, cadastros, pendências, parcelas, falhas e sessão
     assert.ok($("#csv-all"));
     click('[data-space="2"]');
     await settle();
+    click("#nav [data-view=entries]");
     click("#add");
     $("[name=description]").value = "Negócio";
     $("[name=amount]").value = "1";

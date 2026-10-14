@@ -71,3 +71,18 @@ Em **Prestação de contas**, **Baixar cópia de segurança** exporta um retrato
 Senhas não são armazenadas de forma legível. **Segurança da conta** permite definir uma nova senha de 16 a 128 caracteres, informando a senha atual. Alterar `ADMIN_PASSWORD` no Railway não substitui a senha de um usuário existente. A atualização do código não redefine senhas existentes.
 
 `SESSION_IDLE_HOURS` configura o limite de inatividade (padrão 12, intervalo 1–168 horas). O limite absoluto continua em 7 dias. A lista de sessões mostra identificadores públicos e informações do navegador; ela não expõe o cookie de autenticação.
+
+## Rotina da doceria
+
+O ambiente **Nossas Delícias** possui um catálogo de **Doces e materiais**, **Cafeterias e fornecedores**, **Compras de materiais**, **Vendas e comprovantes** e **Dados da doceria**. A área Casa continua com seus lançamentos, contas, cartões e relatórios.
+
+1. Cadastre os doces vendidos e os materiais comprados, com unidade e preço padrão. Cadastre cafeterias como clientes e os locais de compra como fornecedores; CPF/CNPJ e endereço são opcionais.
+2. Registre a venda ou compra escolhendo a cafeteria/fornecedor, data da operação, vencimento e os itens. Informe quantidade e preço unitário. Materiais permitem até três casas decimais de quantidade; itens em unidades exigem números inteiros. O servidor calcula o subtotal de cada item e arredonda ao centavo antes de somar.
+3. Ao salvar, **uma única receita ou despesa** é criada junto com o documento, na mesma transação. Não lance o mesmo valor novamente em Lançamentos. Uma venda sem data de recebimento fica **a receber**; uma compra sem data de pagamento fica **a pagar**. O caixa só muda quando há pagamento e conta vinculada.
+4. Baixe o PDF na lista de compras/vendas. O comprovante tem número próprio, data, partes, itens, quantidades, preços, total e situação de pagamento. Dados de nomes, unidades, preços e emitente são copiados na emissão; alterações no cadastro não alteram documentos anteriores. A edição explícita do documento preserva seu número e atualiza o mesmo lançamento financeiro.
+5. Registre recebimento/pagamento usando o botão da lista ou **A pagar e receber**. Para reabrir uma pendência, edite o recebimento/pagamento e apague a data. Remover o documento move seu lançamento para a lixeira; restaurar o lançamento recupera o documento e seu efeito financeiro. O PDF de um documento na lixeira é marcado como cancelado.
+6. Em **Prestação de contas**, consulte totais por cafeteria, doces vendidos e materiais comprados, além do demonstrativo financeiro. O CSV de itens usa a **data da venda/compra**, e os relatórios financeiros mantêm a referência de vencimento/pagamento indicada na tela. O backup JSON inclui documentos, catálogo, emitente e contadores, inclusive registros da lixeira.
+
+**O PDF é um comprovante comercial não fiscal. Não é NF-e, NFC-e nem DANFE e não substitui um documento fiscal autorizado.** A aplicação ainda não integra com SEFAZ ou um provedor fiscal; emissão fiscal real exige configuração fiscal e autorização externa. Nenhum dado fiscal ou identidade empresarial é inventado automaticamente.
+
+As atualizações criam tabelas e campos adicionais sem apagar os lançamentos existentes nem redefinir senhas. Os testes incluem quantidades fracionadas, cálculos exatos, edição com versão, recebimento, isolamento Casa/doceria, idempotência, PDF privado, preservação de snapshots, lixeira/recuperação e reversão integral em falhas.
