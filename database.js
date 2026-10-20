@@ -152,21 +152,30 @@ export async function initialize(pool, env = process.env) {
         [u.id],
       );
     }
-    // Um único login para acesso aos dois ambientes, sem excluir registros financeiros.
+    // Acesso único: mantém a senha estável entre reinícios e não desconecta sessões à toa.
     if (env.SITE_USERNAME && env.SITE_PASSWORD) {
       const username = safeText(env.SITE_USERNAME, 255, "Usuário", true).toLowerCase();
       if (!/^[a-z0-9_]{3,40}$/.test(username)) throw Error("SITE_USERNAME inválido");
       if (env.SITE_PASSWORD.length < 10) throw Error("SITE_PASSWORD precisa ter ao menos 10 caracteres");
-      const salt = crypto.randomBytes(20).toString("hex");
-      const pass = await passwordHash(env.SITE_PASSWORD, salt);
-      const existing = (await db.query("SELECT id FROM users WHERE email=$1", [username])).rows[0];
-      const userId = existing ? existing.id : (await db.query(
-        "INSERT INTO users(email,pass,salt) VALUES($1,$2,$3) RETURNING id",
-        [username,pass,salt]
-      )).rows[0].id;
-      if (existing) await db.query("UPDATE users SET pass=$1,salt=$2 WHERE id=$3",[pass,salt,userId]);
+      const existing = (await db.query("SELECT id,pass,salt FROM users WHERE email=$1", [username])).rows[0];
+      let userId;
+      if (existing) {
+        userId = existing.id;
+        const samePassword = (await passwordHash(env.SITE_PASSWORD, existing.salt)) === existing.pass;
+        if (!samePassword) {
+          const salt = crypto.randomBytes(20).toString("hex");
+          const pass = await passwordHash(env.SITE_PASSWORD, salt);
+          await db.query("UPDATE users SET pass=$1,salt=$2 WHERE id=$3", [pass,salt,userId]);
+          await db.query("DELETE FROM sessions WHERE user_id=$1", [userId]);
+        }
+      } else {
+        const salt = crypto.randomBytes(20).toString("hex");
+        const pass = await passwordHash(env.SITE_PASSWORD, salt);
+        userId = (await db.query("INSERT INTO users(email,pass,salt) VALUES($1,$2,$3) RETURNING id",[username,pass,salt])).rows[0].id;
+      }
       await db.query("INSERT INTO access(user_id,space_id) SELECT $1,id FROM spaces ON CONFLICT DO NOTHING",[userId]);
-      await db.query("DELETE FROM sessions");
+      // Revoga apenas sessões de contas antigas, sem afetar o usuário autorizado.
+      await db.query("DELETE FROM sessions WHERE user_id<>$1",[userId]);
       await db.query("DELETE FROM access WHERE user_id<>$1",[userId]);
     }
     await db.query("COMMIT");
