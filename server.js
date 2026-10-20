@@ -328,6 +328,8 @@ export function createApp({
     }),
     run(async (req, res) => {
       const email = safeText(req.body.email, 255, "E-mail", true).toLowerCase();
+      if (process.env.SITE_USERNAME && email !== process.env.SITE_USERNAME.trim().toLowerCase())
+        throw error("Credenciais inválidas", 401);
       if (
         typeof req.body.password !== "string" ||
         req.body.password.length > 500
