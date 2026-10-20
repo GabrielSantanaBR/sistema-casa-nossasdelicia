@@ -152,6 +152,23 @@ export async function initialize(pool, env = process.env) {
         [u.id],
       );
     }
+    // Um único login para acesso aos dois ambientes, sem excluir registros financeiros.
+    if (env.SITE_USERNAME && env.SITE_PASSWORD) {
+      const username = safeText(env.SITE_USERNAME, 255, "Usuário", true).toLowerCase();
+      if (!/^[a-z0-9_]{3,40}$/.test(username)) throw Error("SITE_USERNAME inválido");
+      if (env.SITE_PASSWORD.length < 10) throw Error("SITE_PASSWORD precisa ter ao menos 10 caracteres");
+      const salt = crypto.randomBytes(20).toString("hex");
+      const pass = await passwordHash(env.SITE_PASSWORD, salt);
+      const existing = (await db.query("SELECT id FROM users WHERE email=$1", [username])).rows[0];
+      const userId = existing ? existing.id : (await db.query(
+        "INSERT INTO users(email,pass,salt) VALUES($1,$2,$3) RETURNING id",
+        [username,pass,salt]
+      )).rows[0].id;
+      if (existing) await db.query("UPDATE users SET pass=$1,salt=$2 WHERE id=$3",[pass,salt,userId]);
+      await db.query("INSERT INTO access(user_id,space_id) SELECT $1,id FROM spaces ON CONFLICT DO NOTHING",[userId]);
+      await db.query("DELETE FROM sessions");
+      await db.query("DELETE FROM access WHERE user_id<>$1",[userId]);
+    }
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");
