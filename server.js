@@ -1024,7 +1024,14 @@ export function createApp({
           args,
         )
       ).rows;
+      const unassignedPayments = (
+        await db.query(
+          "SELECT COUNT(*)::int count,COALESCE(SUM(amount),0) amount FROM active_entries WHERE space_id=$1 AND paid_date BETWEEN $2 AND $3 AND kind IN ('income','expense') AND account_id IS NULL AND card_id IS NULL",
+          args,
+        )
+      ).rows[0];
       res.json({
+        unassignedPayments,
         totals,
         paidTotals,
         byCategory,
