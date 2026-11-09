@@ -1,0 +1,135 @@
+/* Refinamento UI 2 — foco, acabamento e legibilidade.
+   Camada somente visual; não interfere em valores, API ou autenticação. */
+:root{
+  --surface-elevated:#fff;--ring:#90c1ff;--hairline:#e7eff8;
+}
+body{font-feature-settings:"tnum" 1,"cv11" 1;-webkit-font-smoothing:antialiased;}
+h2{line-height:1.18;}
+h3{line-height:1.3;}
+p{line-height:1.55;}
+/* Barra de identidade sem competir com o conteúdo. */
+.app-brand{display:flex;align-items:center;gap:11px;padding:0 12px 19px;margin-bottom:3px;border-bottom:1px solid #deebf7;}
+.app-brand .brand-symbol{flex:0 0 38px;height:38px;border-radius:12px;background:linear-gradient(145deg,#2559b6,#348dd1);display:grid;place-items:center;color:#fff;box-shadow:0 7px 16px #3470cf30;}
+.app-brand .brand-symbol svg{width:23px;height:23px;stroke-width:1.9;}
+.app-brand .brand-copy{min-width:0;display:grid;gap:3px;}
+.app-brand strong{font-size:13px;letter-spacing:-.02em;color:#234c77;line-height:1.05;}
+.app-brand small{font-size:10px;letter-spacing:.075em;color:#7f96ae;text-transform:uppercase;}
+/* Navegação: menos "cards", mais organização; uma coluna tátil legível. */
+.sidebar nav .side-label{padding:18px 12px 6px;color:#8499ad;}
+.sidebar nav button{position:relative;min-height:46px;letter-spacing:-.006em;line-height:1.26;}
+.sidebar nav button.active{box-shadow:none;border-color:#c7dff9;}
+.sidebar nav button.active::after{content:"";position:absolute;right:10px;width:5px;height:5px;border-radius:50%;background:#3786e4;}
+.sidebar nav button.active .nav-icon{background:#cfe5ff;}
+.sidebar nav button:focus-visible{outline-offset:-3px;}
+.sidebar nav::-webkit-scrollbar{width:5px;}
+.sidebar nav::-webkit-scrollbar-thumb{background:#c8d8e8;border-radius:8px;}
+/* Separação entre ambientes claramente clicável. */
+.workspace-bar{box-shadow:0 1px 0 #dce9f633;}
+.spaces{gap:8px;}
+.spaces button{font-weight:650;transition:background .18s,border-color .18s,transform .18s;}
+.spaces button.active{box-shadow:inset 0 1px 0 #ffffffaa,0 3px 9px #2869bd0c;}
+.workspace-tools .icon-button{background:#edf5ff;}
+/* Hierarquia: valor primeiro, elementos de suporte discretos. */
+.topbar{align-items:center;}
+.topbar .eyebrow{display:block;margin-bottom:9px;}
+.topbar h2{margin:0 0 9px;font-size:clamp(26px,2.3vw,35px);}
+.topbar p{max-width:720px;font-size:13.5px;color:#7289a3;}
+.topbar button.primary{min-height:44px;}
+main{min-height:calc(100dvh - 205px);}
+.period-bar{gap:15px;flex-wrap:wrap;}
+.month-control{gap:7px;}
+.month-control input{font-weight:620;}
+/* Balanço: três áreas diferenciadas sem excesso de ornamentos. */
+.balance-band{isolation:isolate;}
+.balance-band::after{z-index:-1;}
+.balance-band small{font-weight:600;letter-spacing:.005em;}
+.balance-band strong{font-variant-numeric:tabular-nums;line-height:1.18;}
+.balance-band .hint{line-height:1.4;}
+.balance-band .income,.balance-band .expense{position:relative;}
+/* Conteúdo consistente em todas as abas. */
+.panel,.document-row{transition:border-color .2s ease,box-shadow .2s ease;}
+.panel:hover,.document-row:hover{border-color:#c8ddf3;}
+.section-head{margin-bottom:18px;}
+.section-head h3{margin-bottom:0;}
+.panel h3{font-size:15.5px;letter-spacing:-.025em;}
+.data-table{font-variant-numeric:tabular-nums;}
+.data-table th{letter-spacing:.08em;font-size:10.5px;padding:13px 12px;}
+.data-table td{padding:14px 12px;line-height:1.5;}
+.data-table tbody tr{transition:background .15s;}
+.data-table td .subtle{line-height:1.4;}
+.table-scroll{scrollbar-width:thin;scrollbar-color:#c2d5e9 transparent;}
+.listline{line-height:1.45;}
+.actions button{min-height:34px;}
+.actions button:hover{color:#1b5fb7;}
+.tag{letter-spacing:.015em;}
+.empty{border-radius:13px;background:linear-gradient(135deg,#f8fbff,#f0f7ff);border:1px dashed #cddff2;}
+.empty strong{font-weight:700;}
+.loading{background:linear-gradient(110deg,#f7fbff,#eaf3ff,#f7fbff);background-size:200% 100%;border:1px solid #e1edf8;border-radius:14px;padding:35px 24px;color:#55789d;animation:skeleton-shimmer 2s ease-in-out infinite;}
+@keyframes skeleton-shimmer{to{background-position:-200% 0}}
+/* Campos e ações: clicáveis, mas sem aparência genérica. */
+button:not(.icon-button):not(.primary){font-weight:620;}
+button:disabled{opacity:.54;cursor:not-allowed;}
+button:disabled:hover{transform:none;box-shadow:none;}
+.button-row,.filters{align-items:center;}
+.filters input,.filters select{border-radius:11px;}
+input,select,textarea{accent-color:#326fd9;}
+input::placeholder,textarea::placeholder{color:#8b9eb2;opacity:1;}
+form label{line-height:1.45;}
+.form-grid{row-gap:18px;}
+.form-section summary{font-weight:680;}
+.modal-header{gap:16px;}
+.modal-header h2{font-weight:750;}
+.modal-footer{gap:10px;padding-bottom:3px;}
+.modal-footer button{min-height:42px;padding-inline:19px;}
+dialog:focus-visible{outline:none;}
+.toast{max-width:min(430px,calc(100vw - 30px));line-height:1.55;padding:13px 18px;}
+/* Módulo da doceria: realce de totais e documentos, sem mudar formulários. */
+.business-intro h3{max-width:640px;line-height:1.3;}
+.business-intro p{max-width:620px;}
+.document-top h3{font-weight:710;}
+.document-summary{gap:14px 28px;}
+.document-value strong{font-variant-numeric:tabular-nums;letter-spacing:-.03em;}
+.document-actions{gap:9px;}
+.document-actions button,.document-actions .button-link{min-height:38px;}
+.line-editor{background:#f8fbff;}
+/* Escuro com contraste e estados ativos coerentes. */
+body.dark .app-brand{border-bottom-color:#294661;}
+body.dark .app-brand strong{color:#e3f0ff;}
+body.dark .app-brand small{color:#9fb4cb;}
+body.dark .sidebar nav .side-label{color:#91a8c4;}
+body.dark .sidebar nav button.active::after{background:#8ac2ff;}
+body.dark .workspace-bar{box-shadow:none;}
+body.dark .topbar p{color:#a9bfd6;}
+body.dark .empty{background:linear-gradient(135deg,#1a304d,#142943);border-color:#3a5674;color:#b5cbe1;}
+body.dark .loading{background:linear-gradient(110deg,#172b45,#1f3b5a,#172b45);background-size:200% 100%;border-color:#385473;color:#bbd2ed;}
+body.dark .panel:hover,body.dark .document-row:hover{border-color:#446485;}
+body.dark input::placeholder,body.dark textarea::placeholder{color:#8aa3be;}
+body.dark .sidebar nav button:focus-visible{outline-color:#8ac2ff;}
+@media(max-width:1150px){.topbar h2{font-size:29px}.app-brand strong{font-size:12px}}
+@media(max-width:760px){
+ .app-brand{padding:0 8px 16px;}
+ .topbar{align-items:flex-start;}
+ .topbar h2{font-size:27px;}
+ .topbar p{font-size:12.5px;}
+ .balance-band strong{letter-spacing:-.025em;}
+ .period-bar{padding:10px 12px;}
+ .data-table th{padding:11px 9px;}
+ .data-table td{padding:13px 9px;}
+ .actions button{min-height:38px;}
+ .dashboard-grid,.dashboard-bottom,.panels{row-gap:14px;}
+ .document-summary{gap:10px 14px;}
+ .modal-footer{padding-bottom:max(3px,env(safe-area-inset-bottom));}
+}
+@media(max-width:420px){
+ .topbar .primary{white-space:normal;line-height:1.2;text-align:center;}
+ .spaces button{font-size:11.5px;padding-inline:9px;}
+ .workspace-tools{gap:8px;}
+ .panel{padding:15px;}
+ .balance-band{padding:20px 15px;}
+}
+@media(prefers-reduced-motion:reduce){.loading{animation:none!important;}}
+@media print{
+ .app-brand{display:none;}
+ .panel:hover,.document-row:hover{border-color:#ccc;}
+ .empty{background:white;border:1px solid #ddd;}
+}
