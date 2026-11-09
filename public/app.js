@@ -757,7 +757,12 @@ function assets(type) {
                   ) +
                   '</strong><span class="subtle">' +
                   (type === "cards" ? "Limite cadastrado" : "Saldo atual") +
-                  "</span>"
+                  "</span>" +
+                  (type === "cards"
+                    ? '<span class="subtle">Compras lançadas no período: ' +
+                      money(state.summary.cards.find((c) => String(c.id) === String(x.id))?.purchases || 0) +
+                      "</span>"
+                    : "")
                 : type === "contacts"
                   ? '<span class="subtle">' + esc(x.notes) + "</span>"
                   : "") +
