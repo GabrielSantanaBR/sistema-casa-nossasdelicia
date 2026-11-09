@@ -883,6 +883,34 @@ test("cadastros mostram os lançamentos vinculados sem misturar ambientes", asyn
   await request(app).get(`/api/s/${sid}/links/cards/${card.id}`).expect(401);
 });
 
+test("conferência identifica valores liquidados sem conta e desaparece quando vinculados", async () => {
+  const settled = (
+    await post("entries", entry({
+      description: "Recebimento sem conta para conciliar",
+      kind: "income",
+      amount: "31.26",
+      due_date: todayBR(),
+      paid_date: todayBR(),
+    })).expect(201)
+  ).body;
+  const range = `/api/s/${sid}/summary?from=${todayBR()}&to=${todayBR()}`;
+  const before = (await agent.get(range).expect(200)).body.unassignedPayments;
+  assert.ok(Number(before.count) >= 1);
+  assert.ok(Number(before.amount) >= 31.26);
+  await put(`entries/${settled.id}`, entry({
+    description: settled.description,
+    kind: "income",
+    amount: settled.amount,
+    due_date: todayBR(),
+    paid_date: todayBR(),
+    account_id: bank.id,
+    version: settled.version,
+  })).expect(200);
+  const afterReview = (await agent.get(range).expect(200)).body.unassignedPayments;
+  assert.equal(Number(afterReview.count), Number(before.count) - 1);
+  assert.equal(Math.round((Number(before.amount) - Number(afterReview.amount)) * 100), 3126);
+});
+
 test("logout revoga sessão e expiração impede novo acesso", async () => {
   await agent
     .post("/api/logout")
