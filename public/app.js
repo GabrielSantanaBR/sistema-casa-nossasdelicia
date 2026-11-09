@@ -796,6 +796,23 @@ function assets(type) {
     "</section>"
   );
 }
+function attributionReview() {
+  const value = state.summary.unassignedPayments || { count: 0, amount: 0 };
+  if (!value.count) {
+    return '<div class="review-good"><strong>Conferência de pagamentos</strong><span>Todos os pagamentos e recebimentos liquidados neste mês estão ligados a uma conta, caixa ou cartão.</span></div>';
+  }
+  const rows = state.paymentEntries.filter(t =>
+    (t.kind === "income" || t.kind === "expense") &&
+    t.paid_date && !t.account_id && !t.card_id
+  );
+  return '<section class="panel review-pending"><div class="section-head"><div><h3>Pagamentos sem conta vinculada</h3><p>' +
+    value.count + ' lançamento(s) · ' + money(value.amount) +
+    '. Esses valores entram nos totais, mas não no saldo de uma conta. Edite o lançamento para escolher a conta ou o caixa.</p></div></div>' +
+    (rows.length
+      ? table(["Descrição","Vencimento","Tipo","Valor","Situação","Ações"],rows.map(t => entryRow(t)))
+      : '<p>Atualize a página para consultar os lançamentos.</p>') +
+    '</section>';
+}
 function reports() {
   const inc = sum("income"),
     exp = sum("expense"),
@@ -807,6 +824,7 @@ function reports() {
     );
   return (
     (state.space.kind === "business" ? businessReport() : "") +
+    attributionReview() +
     ('<div class="button-row"><button class="primary" id="csv">↓ Exportar mês (CSV)</button><button id="csv-paid">Exportar pagamentos do mês</button><button id="backup">Baixar cópia de segurança</button><button id="csv-all">Exportar histórico completo</button><button id="print">Imprimir esta página</button></div><div class="guide">Previsões usam o vencimento; valores recebidos e liquidados usam a data do pagamento, mesmo quando o vencimento pertence a outro mês. Escolha exportar o mês ou o histórico completo do ambiente atual. Compras no cartão devem ser lançadas uma única vez para não duplicar despesas.</div><div class="panels">' +
       section(
         "Demonstrativo do período",
