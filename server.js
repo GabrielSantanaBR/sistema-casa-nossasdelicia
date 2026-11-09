@@ -740,6 +740,36 @@ export function createApp({
       ),
     );
   }
+  // Movimentações vinculadas: mesmo registro aparece no cadastro, relatório e documento.
+  // O tipo e o ID são validados; nunca aceitamos nomes de colunas arbitrários do cliente.
+  app.get(
+    "/api/s/:sid/links/:type/:id",
+    run(async (req, res) => {
+      const fields = {
+        accounts: "(e.account_id=$2 OR e.to_account_id=$2)",
+        cards: "e.card_id=$2",
+        categories: "e.category_id=$2",
+        contacts: "e.contact_id=$2",
+      };
+      const type = req.params.type;
+      if (!Object.hasOwn(fields, type) || !validId(req.params.id))
+        throw error("Cadastro inválido");
+      const linked = await db.query(
+        `SELECT id FROM ${type} WHERE id=$1 AND space_id=$2`,
+        [req.params.id, req.sid],
+      );
+      if (!linked.rowCount) throw error("Cadastro não encontrado neste ambiente", 404);
+      const rows = await db.query(
+        `SELECT e.*, d.id AS document_id
+         FROM active_entries e
+         LEFT JOIN business_documents d ON d.entry_id=e.id AND d.space_id=e.space_id
+         WHERE e.space_id=$1 AND ${fields[type]}
+         ORDER BY e.due_date DESC,e.id DESC LIMIT 50`,
+        [req.sid, req.params.id],
+      );
+      res.json(rows.rows);
+    }),
+  );
   app.get(
     "/api/s/:sid/entries",
     run(async (req, res) => {
