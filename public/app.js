@@ -72,6 +72,7 @@ const state = {
   documentStatus: "all",
   productKind: "all",
   audit: [],
+  related: null,
   edit: null,
   mode: "entries",
   month: today().slice(0, 7),
@@ -296,6 +297,7 @@ async function allEntries(base, params = {}) {
 
 async function load() {
   const version = ++loadVersion;
+  state.related = null;
   const base = endpoint();
   $("#content").innerHTML =
     '<div class="loading" role="status">Carregando suas contas…</div>';
@@ -701,6 +703,16 @@ function entriesView(bills = false) {
     "</section>"
   );
 }
+function relatedPanel(type, record) {
+  const selected = state.related;
+  if (!selected || selected.type !== type || String(selected.id) !== String(record.id) || String(selected.spaceId) !== String(state.space.id)) return "";
+  return '<section class="linked-panel"><div class="section-head"><div><h4>Movimentações de ' + esc(record.name) +
+    '</h4><p>Até 50 registros de todo o histórico, incluindo compras e vendas vinculadas.</p></div></div>' +
+    (selected.rows.length
+      ? table(["Descrição", "Vencimento", "Tipo", "Valor", "Situação", "Ações"], selected.rows.map(t => entryRow(t)))
+      : '<div class="empty">Ainda não há lançamentos vinculados a este cadastro.</div>') +
+    '</section>';
+}
 function assets(type) {
   const items = state[type],
     labels = {
@@ -761,7 +773,12 @@ function assets(type) {
               x.id +
               '" aria-label="Excluir ' +
               esc(x.name) +
-              '">Excluir</button></div></div>'
+              '">Excluir</button></div></div>' +
+              '<div class="linked-action"><button type="button" data-show-related="' +
+              type + ':' + x.id + '" aria-expanded="' +
+              Boolean(state.related && state.related.type === type && String(state.related.id) === String(x.id)) +
+              '">Ver movimentações vinculadas</button></div>' +
+              relatedPanel(type, x)
             );
           })
           .join("")
@@ -1054,6 +1071,30 @@ function bindActions(root) {
       }),
   );
 
+  root.querySelectorAll("[data-show-related]").forEach((button) => {
+    button.onclick = async () => {
+      if (button.disabled) return;
+      const [type, id] = button.dataset.showRelated.split(":");
+      if (state.related && state.related.type === type && String(state.related.id) === id && String(state.related.spaceId) === String(state.space.id)) {
+        state.related = null;
+        render();
+        return;
+      }
+      const spaceId = state.space.id;
+      button.disabled = true;
+      button.textContent = "Consultando…";
+      try {
+        const rows = await api(endpoint("links/" + type + "/" + id));
+        if (String(state.space.id) !== String(spaceId)) return;
+        state.related = { type, id, spaceId, rows };
+        render();
+      } catch (err) {
+        notify(err.message);
+        button.disabled = false;
+        button.textContent = "Ver movimentações vinculadas";
+      }
+    };
+  });
   root.querySelectorAll("[data-edit-asset]").forEach(
     (x) =>
       (x.onclick = () => {
@@ -1336,7 +1377,7 @@ function render() {
 async function remove(type, id) {
   const record = (
     type === "entries"
-      ? [...state.entries, ...state.pendingEntries, ...state.paymentEntries]
+      ? [...state.entries, ...state.pendingEntries, ...state.paymentEntries, ...(state.related?.rows || [])]
       : state[type]
   ).find((x) => String(x.id) === String(id));
   if (!record) return notify("Atualize a página para localizar o registro.");
