@@ -1112,6 +1112,7 @@ function bindActions(root) {
           ...state.entries,
           ...state.pendingEntries,
           ...state.paymentEntries,
+          ...(state.related?.rows || []),
         ].find((r) => String(r.id) === x.dataset.settle);
         if (r.document_id) return openLinkedDocument(r.document_id, true);
         openForm("entries", { ...r, paid_date: today() });
@@ -1140,6 +1141,7 @@ function bindActions(root) {
           ...state.entries,
           ...state.pendingEntries,
           ...state.paymentEntries,
+          ...(state.related?.rows || []),
         ].find((t) => String(t.id) === x.dataset.edit);
         if (row.document_id) return openLinkedDocument(row.document_id);
         openForm("entries", row);
