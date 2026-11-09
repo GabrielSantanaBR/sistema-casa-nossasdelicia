@@ -160,3 +160,20 @@ body.dark .linked-panel .data-table th{background:#233d5c;}
   .linked-action{margin-bottom:12px;}
   .linked-action button{min-height:40px;}
 }
+
+/* Conferência de pagamentos sem origem financeira. */
+.review-good{display:flex;align-items:center;gap:12px;background:#ecf9f5;border:1px solid #b6e7d8;color:#16685d;padding:14px 18px;border-radius:13px;margin-bottom:20px;font-size:12px;}
+.review-good strong{font-size:13px;flex:none;}
+.review-good span{line-height:1.5;}
+.review-pending{border-color:#e7d0a9;background:#fffaf1;margin-bottom:20px;}
+.review-pending .section-head{align-items:flex-start;}
+.review-pending .section-head h3{color:#79501a;}
+.review-pending .section-head p{margin:6px 0 0;font-size:12px;color:#8b652d;}
+.review-pending .table-scroll{background:#fff;border:1px solid #f0e5d4;border-radius:10px;}
+body.dark .review-good{background:#153d3c;border-color:#33665e;color:#a5e8d3;}
+body.dark .review-pending{background:#302a25;border-color:#635137;}
+body.dark .review-pending .section-head h3{color:#f5d4a8;}
+body.dark .review-pending .section-head p{color:#e0be8e;}
+body.dark .review-pending .table-scroll{background:var(--panel);border-color:#574d40;}
+@media(max-width:760px){.review-good{flex-direction:column;align-items:flex-start;gap:4px}.review-pending{padding:14px;}}
+@media print{.review-good,.review-pending{background:white!important;border:1px solid #bbb;color:black!important;}}
