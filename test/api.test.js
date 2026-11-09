@@ -829,6 +829,60 @@ test("troca de senha exige a atual, reverte falhas e gira sessão e CSRF", async
   );
 });
 
+test("cadastros mostram os lançamentos vinculados sem misturar ambientes", async () => {
+  const expense = (
+    await post(
+      "entries",
+      entry({
+        description: "Vínculo ao banco",
+        amount: "42.17",
+        account_id: bank.id,
+      }),
+    ).expect(201)
+  ).body;
+  const purchase = (
+    await post(
+      "entries",
+      entry({
+        description: "Vínculo ao cartão",
+        amount: "13.40",
+        card_id: card.id,
+      }),
+    ).expect(201)
+  ).body;
+  const transfer = (
+    await post(
+      "entries",
+      entry({
+        description: "Transferência entre contas",
+        kind: "transfer",
+        amount: "5.00",
+        account_id: bank.id,
+        to_account_id: destination.id,
+        paid_date: null,
+      }),
+    ).expect(201)
+  ).body;
+  const accountRows = (
+    await agent.get(`/api/s/${sid}/links/accounts/${bank.id}`).expect(200)
+  ).body;
+  const destinationRows = (
+    await agent.get(`/api/s/${sid}/links/accounts/${destination.id}`).expect(200)
+  ).body;
+  const cardRows = (
+    await agent.get(`/api/s/${sid}/links/cards/${card.id}`).expect(200)
+  ).body;
+  assert.ok(accountRows.some((row) => row.id === expense.id));
+  assert.ok(accountRows.some((row) => row.id === transfer.id));
+  assert.ok(destinationRows.some((row) => row.id === transfer.id));
+  assert.ok(cardRows.some((row) => row.id === purchase.id));
+  assert.ok(!cardRows.some((row) => row.id === expense.id));
+  await agent.get(`/api/s/${sid}/links/accounts/999999999`).expect(404);
+  await agent.get(`/api/s/${sid}/links/entries/${expense.id}`).expect(400);
+  await agent.get(`/api/s/${other}/links/accounts/${bank.id}`).expect(404);
+  await request(app).get(`/api/s/${sid}/links/cards/${card.id}`).expect(401);
+});
+
 test("logout revoga sessão e expiração impede novo acesso", async () => {
   await agent
     .post("/api/logout")
