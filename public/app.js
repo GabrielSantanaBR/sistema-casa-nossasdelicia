@@ -966,20 +966,16 @@ function auditDetails(row) {
   );
 }
 const icons = {
-  trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',
-  overview: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>',
-  entries: '<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/>',
-  bills:
-    '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M8 2v4m8-4v4M4 10h16M8 14h3m-3 3h7"/>',
-  cards:
-    '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
-  accounts: '<path d="m3 8 9-5 9 5H3zm2 3v7m7-7v7m7-7v7M3 21h18"/>',
-  categories:
-    '<path d="m3 3 8 0 10 10-8 8L3 11V3z"/><circle cx="7.5" cy="7.5" r="1"/>',
-  contacts:
-    '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3m2-17a3 3 0 0 1 0 6m1 5a5 5 0 0 1 3 5"/>',
-  reports: '<path d="M4 21V3h12l4 4v14H4zm12-18v5h4M8 12h8M8 16h8"/>',
-  audit: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  trash: '<path d="M4 7h16M10 4h4m-8 3 .8 13h10.4L18 7M10 11v5m4-5v5"/><path d="M9 4h6" />',
+  overview: '<rect x="3" y="3" width="8" height="8" rx="2.5"/><rect x="13" y="3" width="8" height="5" rx="2"/><rect x="13" y="10" width="8" height="11" rx="2.5"/><rect x="3" y="13" width="8" height="8" rx="2.5"/>',
+  entries: '<path d="M4 7h16m-4-3 4 3-4 3M20 17H4m4-3-4 3 4 3"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>',
+  bills: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h5M8 16h3"/><path d="m15 16 2 2 3-4"/>',
+  cards: '<rect x="2.5" y="5" width="19" height="14" rx="3.5"/><path d="M2.5 10h19M7 15h4"/>',
+  accounts: '<rect x="3" y="8" width="18" height="13" rx="3"/><path d="m5 8 11-5 2 5M7 13h6"/><circle cx="17" cy="15" r="1.3"/>',
+  categories: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><circle cx="17.25" cy="17.25" r="3.75"/>',
+  contacts: '<circle cx="9" cy="8" r="3.25"/><path d="M3.5 20v-1.5a5.5 5.5 0 0 1 11 0V20M17 5.5a3 3 0 0 1 0 5.8M18.5 14a5 5 0 0 1 2.5 4.6"/>',
+  reports: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 16v-3m4 3V9m4 7v-5M8 7h4"/>',
+  audit: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2M7 4l-2-2"/>',
   theme: '<path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5z"/>',
 };
 const icon = (name) =>
